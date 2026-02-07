@@ -1,4 +1,5 @@
 <!-- markdownlint-disable MD030 -->
+<h1 align="center">Daedalus</h1>
 
 <p align="center">
 <img src="https://github.com/simonabler/Daedalus/blob/main/images/daedalus.png#gh-light-mode-only">
@@ -12,7 +13,6 @@
 
 </div>
 
-<h3>Daedalus</h3>
 
 A local, multi-agent AI coding system that autonomously plans, implements, tests, documents, and commits code changes to Git repositories.
 
