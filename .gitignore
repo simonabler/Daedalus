@@ -1,0 +1,99 @@
+# ══════════════════════════════════════════════════════════════
+#  daedalus — .gitignore
+# ══════════════════════════════════════════════════════════════
+
+# ── Secrets & Environment ─────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+.eggs/
+
+# ── Virtual Environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.uv/
+
+# ── Testing & Quality ────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.lcov
+
+# ── Linting & Type Checking ──────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── IDE & Editor ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+.ropeproject
+
+# ── OS Files ──────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Node / Frontend (if applicable in target repos) ──────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ── .NET (if applicable in target repos) ─────────────────────
+bin/
+obj/
+*.user
+*.suo
+
+# ── Docker ────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Memory / Runtime Data ────────────────────────────────────
+memory/
+*.db
+*.sqlite3
