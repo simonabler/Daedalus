@@ -1,10 +1,11 @@
-"""Safe POSIX shell execution with sandbox and blocklist enforcement."""
+"""Safe PowerShell execution with sandbox and blocklist enforcement."""
 
 from __future__ import annotations
 
 import os
 import platform
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,32 +14,24 @@ from langchain_core.tools import tool
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
-logger = get_logger("tools.shell")
+logger = get_logger("tools.powershell")
 
 IS_WINDOWS = platform.system().lower().startswith("win")
-SHELL_ENABLED = not IS_WINDOWS
+POWERSHELL_ENABLED = IS_WINDOWS
 
-# Patterns that must never be executed.
 BLOCKED_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"\brm\s+(-[rRf]+\s+)*/((?!home)|$)", re.IGNORECASE),
-    re.compile(r"\bshutdown\b"),
-    re.compile(r"\breboot\b"),
-    re.compile(r"\bmkfs\b"),
-    re.compile(r"\bdd\s+.*of=/dev/", re.IGNORECASE),
-    re.compile(r":\(\)\s*\{.*:\|:.*\}"),
-    re.compile(r"\bchmod\s+(-R\s+)?777\s+/"),
+    re.compile(r"\bshutdown\b", re.IGNORECASE),
+    re.compile(r"\brestart-computer\b", re.IGNORECASE),
+    re.compile(r"\bstop-computer\b", re.IGNORECASE),
+    re.compile(r"\bformat-volume\b", re.IGNORECASE),
+    re.compile(r"\bclear-disk\b", re.IGNORECASE),
+    re.compile(r"\binitialize-disk\b", re.IGNORECASE),
+    re.compile(r"\bdiskpart\b", re.IGNORECASE),
+    re.compile(r"\bbcdedit\b", re.IGNORECASE),
+    re.compile(r"\bremove-item\b.*-recurse.*-force", re.IGNORECASE),
     re.compile(r"\bcurl\s+.*\|\s*(ba)?sh", re.IGNORECASE),
     re.compile(r"\bwget\s+.*\|\s*(ba)?sh", re.IGNORECASE),
-    re.compile(r"\bsudo\b"),
-    re.compile(r"\bsu\s+"),
-    re.compile(r"\bpasswd\b"),
-    re.compile(r"\buseradd\b"),
-    re.compile(r"\buserdel\b"),
-    re.compile(r"\bsystemctl\b"),
-    re.compile(r"\bservice\s+"),
-    re.compile(r"\biptables\b"),
-    re.compile(r"\bmount\b"),
-    re.compile(r"\bumount\b"),
+    re.compile(r"\b(iwr|invoke-webrequest)\b.*\|\s*(iex|invoke-expression)", re.IGNORECASE),
 ]
 
 
@@ -58,14 +51,19 @@ def _truncate(text: str) -> str:
     return text
 
 
-@tool
-def run_shell(command: str, working_dir: str = ".") -> str:
-    """Execute a shell command inside the target repository.
+def _resolve_ps_executable() -> str | None:
+    """Find an available PowerShell executable."""
+    return shutil.which("pwsh") or shutil.which("powershell")
 
-    This tool is only enabled on non-Windows systems.
+
+@tool
+def run_powershell(command: str, working_dir: str = ".") -> str:
+    """Execute a PowerShell command inside the target repository.
+
+    This tool is only enabled on Windows systems.
     """
-    if not SHELL_ENABLED:
-        return "DISABLED: run_shell is only enabled on non-Windows systems."
+    if not POWERSHELL_ENABLED:
+        return "DISABLED: run_powershell is only enabled on Windows systems."
 
     settings = get_settings()
     root = Path(settings.target_repo_path).resolve()
@@ -81,10 +79,14 @@ def run_shell(command: str, working_dir: str = ".") -> str:
 
     reason = _is_blocked(command)
     if reason:
-        logger.warning("BLOCKED shell | %s | reason: %s", command, reason)
+        logger.warning("BLOCKED powershell | %s | reason: %s", command, reason)
         return f"BLOCKED: {reason}"
 
-    logger.info("run_shell  | cwd=%s | cmd=%s", cwd, command)
+    ps_exe = _resolve_ps_executable()
+    if not ps_exe:
+        return "ERROR: no PowerShell executable found (pwsh/powershell)."
+
+    logger.info("run_powershell | cwd=%s | cmd=%s", cwd, command)
     env = {
         **dict(os.environ),
         "GIT_AUTHOR_NAME": settings.git_author_name,
@@ -93,8 +95,8 @@ def run_shell(command: str, working_dir: str = ".") -> str:
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            [ps_exe, "-NoProfile", "-NonInteractive", "-Command", command],
+            shell=False,
             cwd=str(cwd),
             capture_output=True,
             text=True,
@@ -117,10 +119,10 @@ def run_shell(command: str, working_dir: str = ".") -> str:
         output += ("\n--- stderr ---\n" if output else "") + result.stderr
 
     output = _truncate(output.strip())
-    logger.info("run_shell  | exit=%d | output_len=%d", result.returncode, len(output))
+    logger.info("run_powershell | exit=%d | output_len=%d", result.returncode, len(output))
 
     status = "OK" if result.returncode == 0 else f"FAILED (exit {result.returncode})"
     return f"[{status}]\n{output}" if output else f"[{status}]"
 
 
-ALL_SHELL_TOOLS = [run_shell] if SHELL_ENABLED else []
+ALL_POWERSHELL_TOOLS = [run_powershell] if POWERSHELL_ENABLED else []

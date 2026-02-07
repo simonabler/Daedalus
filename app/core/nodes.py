@@ -23,7 +23,7 @@ from app.core.logging import get_logger
 from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
 from app.tools.filesystem import read_file, write_file, list_directory
 from app.tools.git import git_command, git_create_branch, git_commit_and_push, git_status
-from app.tools.shell import run_shell
+from app.tools.terminal import run_terminal
 from app.tools.build import run_tests, run_linter
 
 logger = get_logger("core.nodes")
@@ -70,18 +70,18 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None) -> str:
 
 # ── Tool sets ─────────────────────────────────────────────────────────────
 
-PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_shell]
+PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_terminal]
 
 CODER_TOOLS = [
     read_file, write_file, list_directory,
-    run_shell, git_status, git_command,
+    run_terminal, git_status, git_command,
     run_tests, run_linter,
 ]
 
 # Peer reviewers get read-only tools + git diff (no write access)
-REVIEWER_TOOLS = [read_file, list_directory, run_shell, git_status, git_command, run_tests, run_linter]
+REVIEWER_TOOLS = [read_file, list_directory, run_terminal, git_status, git_command, run_tests, run_linter]
 
-TESTER_TOOLS = [read_file, list_directory, run_shell, run_tests, run_linter, git_status]
+TESTER_TOOLS = [read_file, list_directory, run_terminal, run_tests, run_linter, git_status]
 
 
 # ── Helper: determine coder/reviewer pair for an item ────────────────────

@@ -1,8 +1,11 @@
-"""Tests for the safe shell tool — blocklist and sandbox enforcement."""
+"""Tests for the POSIX shell tool."""
 
+import sys
 from unittest.mock import patch
 
 import pytest
+
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="run_shell is disabled on Windows")
 
 
 @pytest.fixture
@@ -51,7 +54,6 @@ class TestBlocklist:
     def test_fork_bomb_blocked(self, mock_settings):
         from app.tools.shell import _is_blocked
 
-        # Test the blocklist function directly since shell may parse it differently
         result = _is_blocked(":(){ :|:& };:")
         assert result is not None
 
@@ -66,7 +68,6 @@ class TestSandbox:
     def test_normal_command_succeeds(self, mock_settings):
         from app.tools.shell import run_shell
 
-        # Create a file to list
         (mock_settings / "test.txt").write_text("hello")
         result = run_shell.invoke({"command": "ls", "working_dir": "."})
         assert "OK" in result

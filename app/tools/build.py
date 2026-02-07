@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.tools.shell import run_shell
+from app.tools.terminal import run_terminal
 
 logger = get_logger("tools.build")
 
@@ -46,11 +46,11 @@ def run_tests(project_type: str = "auto") -> str:
     results = []
     for ptype in types:
         if ptype == "python":
-            r = run_shell.invoke({"command": "python -m pytest --tb=short -q", "working_dir": "."})
+            r = run_terminal.invoke({"command": "python -m pytest --tb=short -q", "working_dir": "."})
         elif ptype == "node":
-            r = run_shell.invoke({"command": "npm test 2>&1 || true", "working_dir": "."})
+            r = run_terminal.invoke({"command": "npm test", "working_dir": "."})
         elif ptype == "dotnet":
-            r = run_shell.invoke({"command": "dotnet test --verbosity minimal", "working_dir": "."})
+            r = run_terminal.invoke({"command": "dotnet test --verbosity minimal", "working_dir": "."})
         else:
             r = f"Unknown project type: {ptype}"
         results.append(f"=== {ptype} tests ===\n{r}")
@@ -73,11 +73,11 @@ def run_linter(project_type: str = "auto") -> str:
     results = []
     for ptype in types:
         if ptype == "python":
-            r = run_shell.invoke({"command": "python -m ruff check . --fix 2>&1 || true", "working_dir": "."})
+            r = run_terminal.invoke({"command": "python -m ruff check . --fix", "working_dir": "."})
         elif ptype == "node":
-            r = run_shell.invoke({"command": "npm run lint 2>&1 || true", "working_dir": "."})
+            r = run_terminal.invoke({"command": "npm run lint", "working_dir": "."})
         elif ptype == "dotnet":
-            r = run_shell.invoke({"command": "dotnet build --verbosity minimal 2>&1", "working_dir": "."})
+            r = run_terminal.invoke({"command": "dotnet build --verbosity minimal", "working_dir": "."})
         else:
             r = f"Unknown project type: {ptype}"
         results.append(f"=== {ptype} lint ===\n{r}")
@@ -100,12 +100,12 @@ def run_build(project_type: str = "auto") -> str:
     results = []
     for ptype in types:
         if ptype == "python":
-            cmd = "python -m py_compile app/*.py 2>&1 || echo 'syntax check done'"
-            r = run_shell.invoke({"command": cmd, "working_dir": "."})
+            cmd = "python -c \"import compileall,sys; ok=compileall.compile_dir('app', quiet=1); print('syntax check done'); sys.exit(0 if ok else 1)\""
+            r = run_terminal.invoke({"command": cmd, "working_dir": "."})
         elif ptype == "node":
-            r = run_shell.invoke({"command": "npm run build 2>&1 || true", "working_dir": "."})
+            r = run_terminal.invoke({"command": "npm run build", "working_dir": "."})
         elif ptype == "dotnet":
-            r = run_shell.invoke({"command": "dotnet build", "working_dir": "."})
+            r = run_terminal.invoke({"command": "dotnet build", "working_dir": "."})
         else:
             r = f"Unknown project type: {ptype}"
         results.append(f"=== {ptype} build ===\n{r}")
