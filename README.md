@@ -1,4 +1,18 @@
-# AI Dev Worker
+<!-- markdownlint-disable MD030 -->
+
+<p align="center">
+<img src="https://github.com/simonabler/Daedalus/blob/main/images/daedalus.png#gh-light-mode-only">
+<img src="https://github.com/simonabler/Daedalus/blob/main/images/daedalus.png#gh-dark-mode-only">
+</p>
+
+<div align="center">
+
+[![Release Notes](https://img.shields.io/github/release/simonabler/Daedalus)](https://github.com/simonabler/Daedalus/releases)
+[![GitHub fork](https://img.shields.io/github/forks/simonabler/Daedalus?style=social)](https://github.com/simonabler/Daedalus/fork)
+
+</div>
+
+<h3>Daedalus</h3>
 
 A local, multi-agent AI coding system that autonomously plans, implements, tests, documents, and commits code changes to Git repositories.
 
@@ -6,35 +20,35 @@ A local, multi-agent AI coding system that autonomously plans, implements, tests
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     USER INTERFACES                          │
-│                Telegram Bot  ·  Web Chat                     │
+│                     USER INTERFACES                         │
+│                Telegram Bot  ·  Web Chat                    │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
-│                LANGGRAPH ORCHESTRATOR                         │
-│                                                              │
-│  ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐  │
-│  │ Planner  │→ │Coder A  │→ │Peer Review│→ │  Planner   │  │
-│  │(GPT-4o-m)│  │(Claude) │  │by Coder B │  │  Review    │  │
-│  │          │  │         │  │(gpt-5.2)  │  │ (final ok) │  │
-│  └──────────┘  └─────────┘  └───────────┘  └─────┬──────┘  │
-│       │                                           │          │
-│       │        ┌─────────┐  ┌───────────┐         │          │
-│       │        │Coder B  │→ │Peer Review│─────────┘          │
-│       │        │(gpt-5.2)│  │by Coder A │                    │
-│       │        │         │  │(Claude)   │                    │
-│       │        └─────────┘  └───────────┘                    │
-│       │                                                      │
-│  ┌────▼─────┐  ┌──────────────────────┐                      │
-│  │ Tester   │→ │ Decide → Commit/Push │                      │
-│  │(Tools+LLM│  └──────────────────────┘                      │
-│  └──────────┘                                                │
+│                LANGGRAPH ORCHESTRATOR                       │
+│                                                             │
+│  ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐   │
+│  │ Planner  │→ │Coder A  │→ │Peer Review│→ │  Planner   │   │
+│  │(GPT-4o-m)│  │(Claude) │  │by Coder B │  │  Review    │   │
+│  │          │  │         │  │(gpt-5.2)  │  │ (final ok) │   │
+│  └──────────┘  └─────────┘  └───────────┘  └─────┬──────┘   │
+│       │                                          │          │
+│       │       ┌─────────┐  ┌───────────┐         │          │
+│       │       │Coder B  │→ │Peer Review│─────────┘          │
+│       │       │(gpt-5.2)│  │by Coder A │                    │
+│       │       │         │  │(Claude)   │                    │
+│       │       └─────────┘  └───────────┘                    │
+│       │                                                     │
+│  ┌────▼─────┐  ┌──────────────────────┐                     │
+│  │ Tester   │→ │ Decide → Commit/Push │                     │
+│  │(Tools+LLM│  └──────────────────────┘                     │
+│  └──────────┘                                               │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
-│                     SAFE TOOLS                               │
-│       Filesystem (sandboxed) · Shell (blocklist)             │
-│       Git (allow/block list) · Build/Test runners            │
+│                     SAFE TOOLS                              │
+│       Filesystem (sandboxed) · Shell (blocklist)            │
+│       Git (allow/block list) · Build/Test runners           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
