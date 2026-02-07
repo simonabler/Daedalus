@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="AI Dev Worker", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Daedalus", version="0.1.0", lifespan=lifespan)
 
 # ── In-memory state ───────────────────────────────────────────────────────
 _current_state: GraphState | None = None
@@ -69,14 +69,28 @@ class StatusResponse(BaseModel):
 
 async def _broadcast(event_type: str, data: Any):
     """Send an event to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+
     message = json.dumps({"type": event_type, "data": data, "ts": datetime.now(UTC).isoformat()})
-    disconnected = set()
-    for ws in _ws_clients:  # noqa: F823
+    disconnected: set[WebSocket] = set()
+    # Iterate over a snapshot so connects/disconnects during await do not mutate
+    # the collection we are iterating.
+    for ws in tuple(_ws_clients):
         try:
             await ws.send_text(message)
         except Exception:
             disconnected.add(ws)
-    _ws_clients -= disconnected
+    if disconnected:
+        _ws_clients.difference_update(disconnected)
+
+
+def _consume_task_exception(task: asyncio.Task):
+    """Consume exceptions from fire-and-forget tasks to avoid noisy warnings."""
+    try:
+        task.result()
+    except Exception as exc:
+        logger.debug("Background task failed: %s", exc)
 
 
 def _log_event(level: str, message: str):
@@ -85,7 +99,8 @@ def _log_event(level: str, message: str):
     # Fire-and-forget broadcast
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_broadcast("log", entry))
+        task = loop.create_task(_broadcast("log", entry))
+        task.add_done_callback(_consume_task_exception)
     except RuntimeError:
         pass
 
@@ -122,7 +137,6 @@ async def _process_tasks():
                 "total": len(final_state.todo_items),
             })
             _log_event("INFO", f"Task complete: {final_state.phase.value}")
-
         except Exception as e:
             _log_event("ERROR", f"Task failed: {e}")
             if _current_state:
@@ -137,7 +151,7 @@ async def _process_tasks():
 
 @app.post("/api/task")
 async def submit_task(req: TaskRequest):
-    """Submit a new task for the AI Dev Worker."""
+    """Submit a new task for the Daedalus."""
     await _task_queue.put(req)
     _log_event("INFO", f"Task queued: {req.task[:100]}")
     return {"status": "queued", "task": req.task, "queue_size": _task_queue.qsize()}
@@ -209,4 +223,4 @@ async def serve_ui():
     ui_path = Path(__file__).parent / "static" / "index.html"
     if ui_path.exists():
         return HTMLResponse(ui_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>AI Dev Worker</h1><p>UI not found. Place index.html in app/web/static/</p>")
+    return HTMLResponse("<h1>Daedalus</h1><p>UI not found. Place index.html in app/web/static/</p>")

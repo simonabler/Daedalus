@@ -1,4 +1,4 @@
-"""AI Dev Worker — main entry point.
+"""Daedalus main entry point.
 
 Starts the FastAPI web server, Telegram bot, and background task processor.
 """
@@ -15,26 +15,23 @@ from app.core.logging import get_logger, setup_logging
 
 def main():
     """Entry point: starts all services."""
-    # Setup logging first
     setup_logging()
     logger = get_logger("main")
     settings = get_settings()
 
     logger.info("=" * 60)
-    logger.info("AI Dev Worker starting")
+    logger.info("Daedalus starting")
     logger.info("=" * 60)
 
-    # Validate configuration
     if not settings.target_repo_path:
-        logger.warning("TARGET_REPO_PATH not set — you'll need to specify repo_path per task")
+        logger.warning("TARGET_REPO_PATH not set - you'll need to specify repo_path per task")
 
-    if not settings.openai_api_key:
-        logger.error("OPENAI_API_KEY not set — Planner agent will fail")
+    if not settings.openai_api_key.strip():
+        logger.error("OPENAI_API_KEY not set - OpenAI-backed roles will fail")
 
-    if not settings.anthropic_api_key:
-        logger.error("ANTHROPIC_API_KEY not set — Coder agent will fail")
+    if not settings.anthropic_api_key.strip():
+        logger.error("ANTHROPIC_API_KEY not set - Anthropic-backed roles will fail")
 
-    # Start
     logger.info("Web UI: http://%s:%d", settings.web_host, settings.web_port)
 
     if settings.telegram_bot_token:
@@ -42,7 +39,6 @@ def main():
     else:
         logger.info("Telegram bot: disabled (no TELEGRAM_BOT_TOKEN)")
 
-    # Run uvicorn (which also starts the background task processor via FastAPI lifespan)
     config = uvicorn.Config(
         "app.web.server:app",
         host=settings.web_host,
@@ -58,6 +54,7 @@ def main():
 
         if settings.telegram_bot_token:
             from app.telegram.bot import run_telegram_bot
+
             tasks.append(run_telegram_bot())
 
         await asyncio.gather(*tasks)

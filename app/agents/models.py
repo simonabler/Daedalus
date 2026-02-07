@@ -1,16 +1,4 @@
-"""LLM model configuration and factory.
-
-Each agent role maps to a specific provider + model.
-Provides a unified interface: get_llm(role) -> BaseChatModel.
-
-Roles:
-  planner     — GPT-4o-mini (OpenAI)
-  coder_a     — Claude (Anthropic) — primary coder
-  coder_b     — gpt-5.2 (OpenAI)  — secondary coder
-  reviewer_a  — same model as coder_a, loaded with peer-review prompt
-  reviewer_b  — same model as coder_b, loaded with peer-review prompt
-  tester      — GPT-4o-mini (OpenAI)
-"""
+"""LLM model configuration and factory."""
 
 from __future__ import annotations
 
@@ -36,11 +24,13 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 def _make_anthropic(model: str, api_key: str, temperature: float = 0.1, max_tokens: int = 8192) -> BaseChatModel:
     from langchain_anthropic import ChatAnthropic
+
     return ChatAnthropic(model=model, api_key=api_key, temperature=temperature, max_tokens=max_tokens)
 
 
 def _make_openai(model: str, api_key: str, temperature: float = 0.2, max_tokens: int = 8192) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(model=model, api_key=api_key, temperature=temperature, max_tokens=max_tokens)
 
 
@@ -49,47 +39,84 @@ def _is_anthropic_model(model_name: str) -> bool:
     return "claude" in model_name.lower()
 
 
+def _normalized_secret(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _require_openai_key(role: AgentRole, model: str, api_key: str) -> str:
+    key = _normalized_secret(api_key)
+    if key:
+        return key
+    raise ValueError(
+        f"Missing OPENAI_API_KEY for role '{role}' with model '{model}'. "
+        "Set OPENAI_API_KEY in .env or switch that role to an Anthropic model."
+    )
+
+
+def _require_anthropic_key(role: AgentRole, model: str, api_key: str) -> str:
+    key = _normalized_secret(api_key)
+    if key:
+        return key
+    raise ValueError(
+        f"Missing ANTHROPIC_API_KEY for role '{role}' with model '{model}'. "
+        "Set ANTHROPIC_API_KEY in .env or switch that role to an OpenAI model "
+        "(for example CODER_A_MODEL=gpt-5.2)."
+    )
+
+
+def _build_for_model(
+    role: AgentRole,
+    model: str,
+    openai_api_key: str,
+    anthropic_api_key: str,
+    temperature: float,
+    max_tokens: int = 8192,
+) -> BaseChatModel:
+    if _is_anthropic_model(model):
+        key = _require_anthropic_key(role, model, anthropic_api_key)
+        return _make_anthropic(model, key, temperature=temperature, max_tokens=max_tokens)
+
+    key = _require_openai_key(role, model, openai_api_key)
+    return _make_openai(model, key, temperature=temperature, max_tokens=max_tokens)
+
+
 def get_llm(role: AgentRole) -> BaseChatModel:
     """Create an LLM instance for the given agent role."""
     settings = get_settings()
 
     if role == "planner":
-        return _make_openai(settings.planner_model, settings.openai_api_key, temperature=0.2, max_tokens=4096)
+        model = settings.planner_model
+        key = _require_openai_key(role, model, settings.openai_api_key)
+        return _make_openai(model, key, temperature=0.2, max_tokens=4096)
 
-    elif role in ("coder_a", "reviewer_a"):
-        # Coder A — Claude by default, but configurable
-        model = settings.coder_a_model
-        if _is_anthropic_model(model):
-            return _make_anthropic(model, settings.anthropic_api_key, temperature=0.1)
-        else:
-            return _make_openai(model, settings.openai_api_key, temperature=0.1)
+    if role in ("coder_a", "reviewer_a"):
+        return _build_for_model(
+            role=role,
+            model=settings.coder_a_model,
+            openai_api_key=settings.openai_api_key,
+            anthropic_api_key=settings.anthropic_api_key,
+            temperature=0.1,
+        )
 
-    elif role in ("coder_b", "reviewer_b"):
-        # Coder B — gpt-5.2 by default, but configurable
-        model = settings.coder_b_model
-        if _is_anthropic_model(model):
-            return _make_anthropic(model, settings.anthropic_api_key, temperature=0.1)
-        else:
-            return _make_openai(model, settings.openai_api_key, temperature=0.1)
+    if role in ("coder_b", "reviewer_b"):
+        return _build_for_model(
+            role=role,
+            model=settings.coder_b_model,
+            openai_api_key=settings.openai_api_key,
+            anthropic_api_key=settings.anthropic_api_key,
+            temperature=0.1,
+        )
 
-    elif role == "tester":
-        return _make_openai(settings.tester_model, settings.openai_api_key, temperature=0.0, max_tokens=4096)
+    if role == "tester":
+        model = settings.tester_model
+        key = _require_openai_key(role, model, settings.openai_api_key)
+        return _make_openai(model, key, temperature=0.0, max_tokens=4096)
 
-    else:
-        raise ValueError(f"Unknown agent role: {role}")
+    raise ValueError(f"Unknown agent role: {role}")
 
 
 def load_system_prompt(role: AgentRole) -> str:
-    """Load the system prompt file for a role.
-
-    Mapping:
-      planner              → supervisor_planner.txt
-      coder_a              → coder_a.txt
-      coder_b              → coder_b.txt
-      reviewer_a           → peer_reviewer_a.txt  (Claude reviews Coder B's work)
-      reviewer_b           → peer_reviewer_b.txt  (gpt-5.2 reviews Coder A's work)
-      tester               → tester.txt
-    """
+    """Load the system prompt file for a role."""
     mapping = {
         "planner": "supervisor_planner.txt",
         "coder_a": "coder_a.txt",

@@ -1,4 +1,4 @@
-"""Telegram bot interface for AI Dev Worker.
+"""Telegram bot interface for Daedalus.
 
 Commands:
   /task <text>  — submit a new task

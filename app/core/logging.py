@@ -16,10 +16,10 @@ def setup_logging() -> logging.Logger:
     """Configure root logger with console + rotating file handlers. Idempotent."""
     global _configured
     if _configured:
-        return logging.getLogger("ai_dev_worker")
+        return logging.getLogger("daedalus")
 
     settings = get_settings()
-    logger = logging.getLogger("ai_dev_worker")
+    logger = logging.getLogger("daedalus")
     logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     logger.propagate = False
 
@@ -47,6 +47,6 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
-def get_logger(name: str = "ai_dev_worker") -> logging.Logger:
+def get_logger(name: str = "daedalus") -> logging.Logger:
     """Get a child logger. Always call setup_logging() at startup first."""
     return logging.getLogger(name)

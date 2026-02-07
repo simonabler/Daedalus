@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daedalus</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242834;
+    --border: #2e3340;
+    --text: #e2e4e9;
+    --text-dim: #8b8fa3;
+    --accent: #6c8aff;
+    --accent-dim: #4a5a8a;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --font: 'IBM Plex Mono', 'Fira Code', 'Consolas', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
+  header .status-badge {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .status-idle { background: var(--surface2); color: var(--text-dim); }
+  .status-active { background: #1a3a2a; color: var(--green); }
+  .status-error { background: #3a1a1a; color: var(--red); }
+
+  .main-layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    overflow: hidden;
+  }
+
+  /* Chat panel */
+  .chat-panel {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .msg-user {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    color: #fff;
+  }
+  .msg-system {
+    align-self: flex-start;
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .msg-error {
+    align-self: flex-start;
+    background: #3a1a1a;
+    color: var(--red);
+    border: 1px solid #5a2a2a;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .input-row input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    outline: none;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row button {
+    padding: 10px 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .input-row button:hover { opacity: 0.85; }
+  .input-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Side panel */
+  .side-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .side-panel h2 {
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+  .status-info {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .status-info .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+  .status-info .label { color: var(--text-dim); }
+  .status-info .value { color: var(--text); font-weight: 500; }
+
+  .logs-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .log-entry {
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1.4;
+    border-radius: 3px;
+    margin-bottom: 2px;
+  }
+  .log-info { color: var(--text-dim); }
+  .log-error { color: var(--red); background: #2a1111; }
+  .log-warn { color: var(--yellow); }
+
+  .messages::-webkit-scrollbar,
+  .logs-container::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-thumb,
+  .logs-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙ Daedalus</h1>
+  <span id="statusBadge" class="status-badge status-idle">IDLE</span>
+</header>
+
+<div class="main-layout">
+  <div class="chat-panel">
+    <div class="messages" id="messages">
+      <div class="msg msg-system">Ready. Enter a task to begin.</div>
+    </div>
+    <div class="input-row">
+      <input type="text" id="taskInput" placeholder="Describe a coding task..." autocomplete="off" />
+      <button id="sendBtn" onclick="sendTask()">Send</button>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <h2>Status</h2>
+    <div class="status-info" id="statusInfo">
+      <div class="row"><span class="label">Phase</span><span class="value" id="phase">idle</span></div>
+      <div class="row"><span class="label">Branch</span><span class="value" id="branch">—</span></div>
+      <div class="row"><span class="label">Progress</span><span class="value" id="progress">0/0</span></div>
+    </div>
+    <h2>Live Logs</h2>
+    <div class="logs-container" id="logs"></div>
+  </div>
+</div>
+
+<script>
+  const msgContainer = document.getElementById('messages');
+  const logContainer = document.getElementById('logs');
+  const taskInput = document.getElementById('taskInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const badge = document.getElementById('statusBadge');
+
+  let ws;
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onopen = () => addLog('info', 'Connected to server');
+    ws.onclose = () => { addLog('error', 'Disconnected — reconnecting...'); setTimeout(connectWS, 3000); };
+    ws.onerror = () => {};
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'status') updateStatus(msg.data);
+        else if (msg.type === 'log') addLog(msg.data.level?.toLowerCase() || 'info', msg.data.message);
+        else if (msg.type === 'error') { addMsg('error', msg.data.message); addLog('error', msg.data.message); }
+        else if (msg.type === 'ack') addMsg('system', msg.data);
+      } catch {}
+    };
+  }
+
+  function addMsg(type, text) {
+    const div = document.createElement('div');
+    div.className = `msg msg-${type}`;
+    div.textContent = text;
+    msgContainer.appendChild(div);
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
+
+  function addLog(level, text) {
+    const div = document.createElement('div');
+    const cls = level === 'error' ? 'log-error' : level === 'warn' ? 'log-warn' : 'log-info';
+    div.className = `log-entry ${cls}`;
+    const time = new Date().toLocaleTimeString();
+    div.textContent = `${time} ${text}`;
+    logContainer.appendChild(div);
+    logContainer.scrollTop = logContainer.scrollHeight;
+    // Trim
+    while (logContainer.children.length > 300) logContainer.removeChild(logContainer.firstChild);
+  }
+
+  function updateStatus(data) {
+    const phase = data.phase || 'idle';
+    document.getElementById('phase').textContent = phase;
+    document.getElementById('branch').textContent = data.branch || '—';
+    document.getElementById('progress').textContent =
+      data.completed !== undefined ? `${data.completed}/${data.total || '?'}` : data.progress || '—';
+
+    badge.textContent = phase.toUpperCase();
+    badge.className = 'status-badge ' + (
+      phase === 'idle' || phase === 'complete' ? 'status-idle' :
+      phase === 'stopped' ? 'status-error' : 'status-active'
+    );
+  }
+
+  function sendTask() {
+    const task = taskInput.value.trim();
+    if (!task) return;
+    addMsg('user', task);
+    taskInput.value = '';
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'task', task }));
+    } else {
+      fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task })
+      }).then(r => r.json()).then(d => addMsg('system', `Task queued (${d.queue_size} in queue)`))
+        .catch(e => addMsg('error', `Failed to submit: ${e}`));
+    }
+  }
+
+  taskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
+  connectWS();
+
+  // Poll status periodically
+  setInterval(() => {
+    fetch('/api/status').then(r => r.json()).then(updateStatus).catch(() => {});
+  }, 5000);
+</script>
+</body>
+</html>

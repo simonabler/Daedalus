@@ -63,4 +63,41 @@ class TestUI:
     def test_serves_html(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "AI Dev Worker" in resp.text or "AI DEV WORKER" in resp.text
+        assert "Daedalus" in resp.text or "DAEDALUS" in resp.text
+
+
+class _OkWS:
+    def __init__(self):
+        self.messages: list[str] = []
+
+    async def send_text(self, message: str):
+        self.messages.append(message)
+
+
+class _FailWS:
+    async def send_text(self, message: str):
+        raise RuntimeError("socket closed")
+
+
+class TestBroadcast:
+    @pytest.mark.asyncio
+    async def test_broadcast_removes_disconnected_clients(self, monkeypatch):
+        from app.web import server
+
+        ok = _OkWS()
+        bad = _FailWS()
+        monkeypatch.setattr(server, "_ws_clients", {ok, bad})
+
+        await server._broadcast("status", {"phase": "testing"})
+
+        assert len(ok.messages) == 1
+        assert ok in server._ws_clients
+        assert bad not in server._ws_clients
+
+    @pytest.mark.asyncio
+    async def test_broadcast_with_no_clients_is_noop(self, monkeypatch):
+        from app.web import server
+
+        monkeypatch.setattr(server, "_ws_clients", set())
+
+        await server._broadcast("status", {"phase": "idle"})

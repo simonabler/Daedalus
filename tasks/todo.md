@@ -1,4 +1,4 @@
-# AI Dev Worker — Task Plan
+# Daedalus — Task Plan
 
 > Auto-managed by the Planner agent. Human edits are welcome.
 
