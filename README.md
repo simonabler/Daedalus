@@ -2,8 +2,7 @@
 <h1 align="center">Daedalus</h1>
 
 <p align="center">
-<img src="https://github.com/simonabler/Daedalus/blob/main/images/daedalus.png#gh-light-mode-only">
-<img src="https://github.com/simonabler/Daedalus/blob/main/images/daedalus.png#gh-dark-mode-only">
+<img src="https://github.com/simonabler/daedalus/blob/main/images/daedalus.png?raw=true">
 </p>
 
 <div align="center">
