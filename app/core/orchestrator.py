@@ -6,8 +6,8 @@ Workflow:
                  └──────────────┘───────────────────┘────────────────┘
 
 Coder assignment alternates per TODO item:
-  - Even items (0, 2, 4…): Coder A (Claude) codes, Reviewer B (gpt-5.2) reviews
-  - Odd  items (1, 3, 5…): Coder B (gpt-5.2) codes, Reviewer A (Claude) reviews
+  - Even items (0, 2, 4…): Coder A (Claude) codes, Reviewer B (GPT-5.3) reviews
+  - Odd  items (1, 3, 5…): Coder B (GPT-5.3) codes, Reviewer A (Claude) reviews
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from app.core.nodes import (
     planner_plan_node,
     coder_node,
     peer_review_node,
+    learn_from_review_node,
     planner_review_node,
     tester_node,
     planner_decide_node,
@@ -46,11 +47,19 @@ def _route_after_coder(state: GraphState) -> str:
 
 
 def _route_after_peer_review(state: GraphState) -> str:
-    """After peer review: APPROVE → planner review, REWORK → back to coder."""
+    """After peer review: always go to learn node (extracts insights), then route."""
+    if state.phase == WorkflowPhase.STOPPED:
+        return "stopped"
+    # Always extract learnings first, even on REWORK
+    return "learn"
+
+
+def _route_after_learn(state: GraphState) -> str:
+    """After learning extraction: APPROVE → planner review, REWORK → back to coder."""
     if state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     if state.phase == WorkflowPhase.CODING:
-        # Peer reviewer said REWORK
+        # Peer reviewer said REWORK — go back to coder
         return "coder"
     return "planner_review"
 
@@ -98,6 +107,7 @@ def build_graph() -> StateGraph:
     graph.add_node("planner", planner_plan_node)
     graph.add_node("coder", coder_node)
     graph.add_node("peer_review", peer_review_node)
+    graph.add_node("learn", learn_from_review_node)
     graph.add_node("planner_review", planner_review_node)
     graph.add_node("tester", tester_node)
     graph.add_node("decide", planner_decide_node)
@@ -118,6 +128,11 @@ def build_graph() -> StateGraph:
     })
 
     graph.add_conditional_edges("peer_review", _route_after_peer_review, {
+        "learn": "learn",
+        "stopped": END,
+    })
+
+    graph.add_conditional_edges("learn", _route_after_learn, {
         "planner_review": "planner_review",
         "coder": "coder",
         "stopped": END,
