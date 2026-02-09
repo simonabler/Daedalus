@@ -80,6 +80,8 @@ def _run_git(command: str) -> str:
                 "GIT_COMMITTER_NAME": settings.git_author_name,
                 "GIT_COMMITTER_EMAIL": settings.git_author_email,
             },
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired:
         return "TIMEOUT: git command took > 60s"
@@ -114,6 +116,9 @@ def git_command(command: str) -> str:
     fetch, log, branch, show, stash, tag, remote, config, rev-parse.
     Blocked: merge, rebase, reset --hard, clean -fd, push --force.
     """
+    command = command.strip()
+    if not command.startswith("git "):
+        command = f"git {command}"
     error = _validate_git_command(command)
     if error:
         logger.warning("git_tool   | %s | %s", command, error)

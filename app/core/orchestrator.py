@@ -6,11 +6,13 @@ Workflow:
                  └──────────────┘───────────────────┘────────────────┘
 
 Coder assignment alternates per TODO item:
-  - Even items (0, 2, 4…): Coder A (Claude) codes, Reviewer B (GPT-5.3) reviews
-  - Odd  items (1, 3, 5…): Coder B (GPT-5.3) codes, Reviewer A (Claude) reviews
+  - Even items (0, 2, 4…): Coder A (Claude) codes, Reviewer B (GPT-5.2) reviews
+  - Odd  items (1, 3, 5…): Coder B (GPT-5.2) codes, Reviewer A (Claude) reviews
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from langgraph.graph import StateGraph, END
 
@@ -190,7 +192,7 @@ async def run_workflow(user_request: str, repo_path: str) -> GraphState:
         initial_state.repo_root,
     )
 
-    final_state_dict = compiled.invoke(initial_state.model_dump())
+    final_state_dict = await asyncio.to_thread(compiled.invoke, initial_state.model_dump())
     final_state = GraphState(**final_state_dict)
 
     logger.info(

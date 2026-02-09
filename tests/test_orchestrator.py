@@ -55,15 +55,24 @@ class TestRouting:
         state = GraphState(phase=WorkflowPhase.PEER_REVIEWING)
         assert _route_after_coder(state) == "peer_review"
 
-    def test_route_after_peer_review_approve(self):
+    def test_route_after_peer_review_always_goes_to_learn(self):
         from app.core.orchestrator import _route_after_peer_review
+        # APPROVE → learn
         state = GraphState(phase=WorkflowPhase.REVIEWING)
-        assert _route_after_peer_review(state) == "planner_review"
+        assert _route_after_peer_review(state) == "learn"
+        # REWORK → also learn (extracts insights even from rework)
+        state2 = GraphState(phase=WorkflowPhase.CODING)
+        assert _route_after_peer_review(state2) == "learn"
 
-    def test_route_after_peer_review_rework(self):
-        from app.core.orchestrator import _route_after_peer_review
+    def test_route_after_learn_approve(self):
+        from app.core.orchestrator import _route_after_learn
+        state = GraphState(phase=WorkflowPhase.REVIEWING)
+        assert _route_after_learn(state) == "planner_review"
+
+    def test_route_after_learn_rework(self):
+        from app.core.orchestrator import _route_after_learn
         state = GraphState(phase=WorkflowPhase.CODING)
-        assert _route_after_peer_review(state) == "coder"
+        assert _route_after_learn(state) == "coder"
 
     def test_route_after_planner_review_approve(self):
         from app.core.orchestrator import _route_after_planner_review
@@ -107,6 +116,11 @@ class TestGraphBuild:
         graph = build_graph()
         # Verify peer_review node exists in the graph
         assert "peer_review" in graph.nodes
+
+    def test_graph_has_learn_node(self):
+        from app.core.orchestrator import build_graph
+        graph = build_graph()
+        assert "learn" in graph.nodes
 
 
 class TestParsePlan:

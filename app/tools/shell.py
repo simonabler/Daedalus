@@ -100,6 +100,8 @@ def run_shell(command: str, working_dir: str = ".") -> str:
             text=True,
             timeout=settings.shell_timeout_seconds,
             env=env,
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired:
         msg = f"TIMEOUT after {settings.shell_timeout_seconds}s: {command}"

@@ -84,7 +84,7 @@ class TestCommandValidation:
         from app.tools.git import git_command
 
         result = git_command.invoke({"command": "ls -la"})
-        assert "ERROR" in result
+        assert "ERROR" in result or "BLOCKED" in result
 
 
 class TestGitCreateBranch:

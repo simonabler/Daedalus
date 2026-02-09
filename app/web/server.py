@@ -1,11 +1,7 @@
-"""FastAPI web server — REST API + WebSocket for live status/logs.
+"""FastAPI web server — wired to the event bus for real-time UI updates.
 
-Endpoints:
-  POST /api/task      — submit a new task
-  GET  /api/status    — current workflow status
-  GET  /api/logs      — recent log entries
-  WS   /ws            — real-time status + log stream
-  GET  /              — serves the web UI
+Events from nodes are broadcast to all WebSocket clients automatically.
+The UI receives structured events and renders them as collapsible steps.
 """
 
 from __future__ import annotations
@@ -23,30 +19,17 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.core.events import WorkflowEvent, get_history, subscribe_async
 from app.core.logging import get_logger
 from app.core.orchestrator import run_workflow
 from app.core.state import GraphState, WorkflowPhase
 
 logger = get_logger("web.server")
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle."""
-    task = asyncio.create_task(_process_tasks())
-    logger.info("Web server started — background worker running")
-    yield
-    task.cancel()
-
-
-app = FastAPI(title="Daedalus", version="0.1.0", lifespan=lifespan)
-
 # ── In-memory state ───────────────────────────────────────────────────────
 _current_state: GraphState | None = None
-_log_buffer: deque[dict] = deque(maxlen=500)
 _ws_clients: set[WebSocket] = set()
 _task_queue: asyncio.Queue = asyncio.Queue()
-_worker_running = False
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -65,10 +48,28 @@ class StatusResponse(BaseModel):
     items_done: int
 
 
-# ── Broadcast helper ──────────────────────────────────────────────────────
+# ── WebSocket broadcast (wired to event bus) ─────────────────────────────
 
-async def _broadcast(event_type: str, data: Any):
-    """Send an event to all connected WebSocket clients."""
+async def _broadcast_event(event: WorkflowEvent) -> None:
+    """Forward a workflow event to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+
+    message = json.dumps({"type": "event", "data": event.to_dict()})
+    disconnected: set[WebSocket] = set()
+    # Iterate over a snapshot so connects/disconnects during await do not mutate
+    # the collection we are iterating.
+    for ws in tuple(_ws_clients):
+        try:
+            await ws.send_text(message)
+        except Exception:
+            disconnected.add(ws)
+    if disconnected:
+        _ws_clients.difference_update(disconnected)
+
+
+async def _broadcast_raw(event_type: str, data: Any) -> None:
+    """Send a raw message (non-event) to all clients."""
     if not _ws_clients:
         return
 
@@ -85,36 +86,14 @@ async def _broadcast(event_type: str, data: Any):
         _ws_clients.difference_update(disconnected)
 
 
-def _consume_task_exception(task: asyncio.Task):
-    """Consume exceptions from fire-and-forget tasks to avoid noisy warnings."""
-    try:
-        task.result()
-    except Exception as exc:
-        logger.debug("Background task failed: %s", exc)
-
-
-def _log_event(level: str, message: str):
-    entry = {"level": level, "message": message, "ts": datetime.now(UTC).isoformat()}
-    _log_buffer.append(entry)
-    # Fire-and-forget broadcast
-    try:
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(_broadcast("log", entry))
-        task.add_done_callback(_consume_task_exception)
-    except RuntimeError:
-        pass
-
-
 # ── Background worker ─────────────────────────────────────────────────────
 
 async def _process_tasks():
     """Background worker that processes tasks from the queue."""
-    global _current_state, _worker_running
-    _worker_running = True
+    global _current_state
 
     while True:
         task_req: TaskRequest = await _task_queue.get()
-        _log_event("INFO", f"Starting task: {task_req.task[:100]}")
 
         try:
             settings = get_settings()
@@ -125,46 +104,56 @@ async def _process_tasks():
                 repo_root=repo,
                 phase=WorkflowPhase.PLANNING,
             )
-            await _broadcast("status", {"phase": "planning", "task": task_req.task})
+            await _broadcast_raw("status", {"phase": "planning", "task": task_req.task})
 
-            # Run the workflow
             final_state = await run_workflow(task_req.task, repo)
             _current_state = final_state
 
-            await _broadcast("status", {
+            await _broadcast_raw("status", {
                 "phase": final_state.phase.value,
                 "completed": final_state.completed_items,
                 "total": len(final_state.todo_items),
+                "branch": final_state.branch_name,
             })
-            _log_event("INFO", f"Task complete: {final_state.phase.value}")
+
         except Exception as e:
-            _log_event("ERROR", f"Task failed: {e}")
+            logger.error("Task failed: %s", e, exc_info=True)
             if _current_state:
                 _current_state.phase = WorkflowPhase.STOPPED
                 _current_state.error_message = str(e)
-            await _broadcast("error", {"message": str(e)})
+            await _broadcast_raw("error", {"message": str(e)})
 
         _task_queue.task_done()
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Subscribe to event bus
+    subscribe_async(_broadcast_event)
+    # Start background worker
+    worker = asyncio.create_task(_process_tasks())
+    logger.info("Web server started — event bus wired, worker running")
+    yield
+    worker.cancel()
+
+
+app = FastAPI(title="Daedadus", version="0.2.0", lifespan=lifespan)
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────
 
 @app.post("/api/task")
 async def submit_task(req: TaskRequest):
-    """Submit a new task for the Daedalus."""
     await _task_queue.put(req)
-    _log_event("INFO", f"Task queued: {req.task[:100]}")
     return {"status": "queued", "task": req.task, "queue_size": _task_queue.qsize()}
 
 
 @app.get("/api/status")
 async def get_status():
-    """Get current workflow status."""
     if not _current_state:
-        return StatusResponse(
-            phase="idle", progress="No active task", branch="",
-            error="", items_total=0, items_done=0,
-        )
+        return StatusResponse(phase="idle", progress="No active task", branch="", error="", items_total=0, items_done=0)
     return StatusResponse(
         phase=_current_state.phase.value,
         progress=_current_state.get_progress_summary(),
@@ -175,22 +164,24 @@ async def get_status():
     )
 
 
-@app.get("/api/logs")
-async def get_logs(limit: int = 100):
-    """Get recent log entries."""
-    entries = list(_log_buffer)[-limit:]
-    return {"logs": entries}
+@app.get("/api/events")
+async def get_events(limit: int = 200):
+    """Return recent workflow events."""
+    return {"events": get_history(limit)}
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket for real-time status and log streaming."""
     await ws.accept()
     _ws_clients.add(ws)
     logger.info("WebSocket client connected (%d total)", len(_ws_clients))
 
     try:
-        # Send current state on connect
+        # Send recent event history on connect
+        history = get_history(50)
+        for evt in history:
+            await ws.send_text(json.dumps({"type": "event", "data": evt}))
+
         if _current_state:
             await ws.send_text(json.dumps({
                 "type": "status",
@@ -198,10 +189,8 @@ async def websocket_endpoint(ws: WebSocket):
                 "ts": datetime.now(UTC).isoformat(),
             }))
 
-        # Keep connection alive, receive messages
         while True:
             data = await ws.receive_text()
-            # Client can send task submissions via WebSocket too
             try:
                 msg = json.loads(data)
                 if msg.get("type") == "task":
@@ -219,8 +208,7 @@ async def websocket_endpoint(ws: WebSocket):
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    """Serve the web UI."""
     ui_path = Path(__file__).parent / "static" / "index.html"
     if ui_path.exists():
         return HTMLResponse(ui_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Daedalus</h1><p>UI not found. Place index.html in app/web/static/</p>")
+    return HTMLResponse("<h1>Daedadus</h1><p>UI not found.</p>")

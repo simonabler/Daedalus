@@ -5,295 +5,414 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Daedalus</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface2: #242834;
-    --border: #2e3340;
-    --text: #e2e4e9;
-    --text-dim: #8b8fa3;
-    --accent: #6c8aff;
-    --accent-dim: #4a5a8a;
+    --bg: #0c0e14;
+    --surface: #151821;
+    --surface2: #1c2030;
+    --surface3: #242a3a;
+    --border: #2a3045;
+    --border-light: #353d55;
+    --text: #d8dce8;
+    --text-dim: #7b839a;
+    --text-faint: #555d74;
+    --accent: #6e8eff;
+    --accent-dim: #3d5099;
     --green: #4ade80;
+    --green-dim: #1a3a2a;
     --red: #f87171;
+    --red-dim: #3a1a1a;
     --yellow: #fbbf24;
-    --font: 'IBM Plex Mono', 'Fira Code', 'Consolas', monospace;
+    --yellow-dim: #3a2e10;
+    --purple: #a78bfa;
+    --cyan: #67e8f9;
+    --font: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: var(--font);
-    background: var(--bg);
-    color: var(--text);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
-  header h1 { font-size: 16px; font-weight: 600; letter-spacing: 1px; }
-  header .status-badge {
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .status-idle { background: var(--surface2); color: var(--text-dim); }
-  .status-active { background: #1a3a2a; color: var(--green); }
-  .status-error { background: #3a1a1a; color: var(--red); }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
 
-  .main-layout {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 340px;
+  /* ── Header ──────────────────────────── */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--accent); }
+  .header-status { display: flex; align-items: center; gap: 12px; }
+  .badge {
+    padding: 3px 10px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.8px;
+  }
+  .badge-idle { background: var(--surface3); color: var(--text-dim); }
+  .badge-active { background: var(--green-dim); color: var(--green); animation: pulse 2s infinite; }
+  .badge-error { background: var(--red-dim); color: var(--red); }
+  .badge-done { background: var(--green-dim); color: var(--green); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+  .progress-text { font-size: 11px; color: var(--text-dim); }
+
+  /* ── Main layout ─────────────────────── */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Chat area ───────────────────────── */
+  .chat { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 6px; }
+  .chat::-webkit-scrollbar { width: 5px; }
+  .chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Message types ───────────────────── */
+  .msg { max-width: 90%; border-radius: 8px; font-size: 12.5px; line-height: 1.6; }
+  .msg-user {
+    align-self: flex-end; background: var(--accent-dim); color: #fff;
+    padding: 10px 14px; margin-top: 8px;
+  }
+
+  /* Status messages — always visible, prominent */
+  .msg-status {
+    align-self: flex-start; padding: 8px 14px;
+    background: var(--surface2); border-left: 3px solid var(--accent);
+    color: var(--text); font-weight: 500;
+  }
+  .msg-status.status-plan {
+    border-left-color: var(--purple); background: #1a1530;
+    white-space: pre-wrap; padding: 12px 16px;
+  }
+  .msg-status.status-verdict-approve { border-left-color: var(--green); }
+  .msg-status.status-verdict-rework { border-left-color: var(--yellow); }
+  .msg-status.status-verdict-pass { border-left-color: var(--green); }
+  .msg-status.status-verdict-fail { border-left-color: var(--red); }
+  .msg-status.status-commit { border-left-color: var(--cyan); }
+  .msg-status.status-error { border-left-color: var(--red); background: var(--red-dim); color: var(--red); }
+  .msg-status.status-complete { border-left-color: var(--green); background: var(--green-dim); color: var(--green); font-weight: 700; }
+
+  /* Collapsible detail blocks — for agent internals */
+  .msg-detail {
+    align-self: flex-start; max-width: 95%; width: 100%;
+  }
+  .msg-detail details {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     overflow: hidden;
   }
+  .msg-detail summary {
+    padding: 7px 12px; font-size: 11.5px; color: var(--text-dim); cursor: pointer;
+    display: flex; align-items: center; gap: 8px; user-select: none;
+    transition: background 0.15s;
+  }
+  .msg-detail summary:hover { background: var(--surface2); }
+  .msg-detail summary::marker { content: ''; }
+  .msg-detail summary .arrow {
+    font-size: 9px; transition: transform 0.2s; color: var(--text-faint);
+  }
+  .msg-detail details[open] summary .arrow { transform: rotate(90deg); }
+  .msg-detail .agent-tag {
+    font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .tag-planner { background: #2a2050; color: var(--purple); }
+  .tag-coder_a { background: #1a2a40; color: #60a5fa; }
+  .tag-coder_b { background: #1a3030; color: #34d399; }
+  .tag-reviewer_a { background: #2a1a40; color: #c084fc; }
+  .tag-reviewer_b { background: #1a3a30; color: #6ee7b7; }
+  .tag-tester { background: #3a2a10; color: var(--yellow); }
+  .tag-system { background: var(--surface3); color: var(--text-dim); }
 
-  /* Chat panel */
-  .chat-panel {
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid var(--border);
-  }
-  .messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .msg {
-    max-width: 80%;
-    padding: 10px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-  .msg-user {
-    align-self: flex-end;
-    background: var(--accent-dim);
-    color: #fff;
-  }
-  .msg-system {
-    align-self: flex-start;
-    background: var(--surface2);
-    color: var(--text);
-  }
-  .msg-error {
-    align-self: flex-start;
-    background: #3a1a1a;
-    color: var(--red);
-    border: 1px solid #5a2a2a;
-  }
-
-  .input-row {
-    display: flex;
-    gap: 8px;
-    padding: 12px 16px;
-    background: var(--surface);
+  .msg-detail .detail-body {
+    padding: 10px 14px; font-size: 11px; line-height: 1.5; color: var(--text-dim);
+    white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto;
     border-top: 1px solid var(--border);
   }
+  .msg-detail .detail-body::-webkit-scrollbar { width: 4px; }
+  .msg-detail .detail-body::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* Tool call sub-items inside details */
+  .tool-item {
+    margin: 4px 0; padding: 4px 8px; background: var(--surface2);
+    border-radius: 4px; font-size: 10.5px;
+  }
+  .tool-item .tool-name { color: var(--cyan); font-weight: 600; }
+  .tool-item .tool-args { color: var(--text-faint); }
+
+  /* ── Input row ───────────────────────── */
+  .input-row {
+    display: flex; gap: 8px; padding: 12px 20px;
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
   .input-row input {
-    flex: 1;
-    padding: 10px 14px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface2);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 13px;
-    outline: none;
+    flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface2); color: var(--text); font-family: var(--font);
+    font-size: 12.5px; outline: none;
   }
   .input-row input:focus { border-color: var(--accent); }
   .input-row button {
-    padding: 10px 20px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    font-family: var(--font);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s;
+    padding: 10px 24px; background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; font-family: var(--font); font-size: 12px; font-weight: 700;
+    cursor: pointer; letter-spacing: 0.5px; transition: opacity 0.15s;
   }
   .input-row button:hover { opacity: 0.85; }
-  .input-row button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* Side panel */
-  .side-panel {
-    display: flex;
-    flex-direction: column;
-    background: var(--surface);
-    overflow: hidden;
-  }
-  .side-panel h2 {
-    padding: 12px 16px;
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-dim);
-    border-bottom: 1px solid var(--border);
-  }
-  .status-info {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-  }
-  .status-info .row {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-  }
-  .status-info .label { color: var(--text-dim); }
-  .status-info .value { color: var(--text); font-weight: 500; }
-
-  .logs-container {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-  }
-  .log-entry {
-    padding: 4px 8px;
-    font-size: 11px;
-    line-height: 1.4;
-    border-radius: 3px;
-    margin-bottom: 2px;
-  }
-  .log-info { color: var(--text-dim); }
-  .log-error { color: var(--red); background: #2a1111; }
-  .log-warn { color: var(--yellow); }
-
-  .messages::-webkit-scrollbar,
-  .logs-container::-webkit-scrollbar { width: 6px; }
-  .messages::-webkit-scrollbar-thumb,
-  .logs-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
 </head>
 <body>
 <header>
   <h1>⚙ Daedalus</h1>
-  <span id="statusBadge" class="status-badge status-idle">IDLE</span>
+  <div class="header-status">
+    <span class="progress-text" id="progressText">—</span>
+    <span class="badge badge-idle" id="badge">IDLE</span>
+  </div>
 </header>
 
-<div class="main-layout">
-  <div class="chat-panel">
-    <div class="messages" id="messages">
-      <div class="msg msg-system">Ready. Enter a task to begin.</div>
-    </div>
-    <div class="input-row">
-      <input type="text" id="taskInput" placeholder="Describe a coding task..." autocomplete="off" />
-      <button id="sendBtn" onclick="sendTask()">Send</button>
-    </div>
+<div class="main">
+  <div class="chat" id="chat">
+    <div class="msg msg-status">Ready. Enter a coding task to begin.</div>
   </div>
-
-  <div class="side-panel">
-    <h2>Status</h2>
-    <div class="status-info" id="statusInfo">
-      <div class="row"><span class="label">Phase</span><span class="value" id="phase">idle</span></div>
-      <div class="row"><span class="label">Branch</span><span class="value" id="branch">—</span></div>
-      <div class="row"><span class="label">Progress</span><span class="value" id="progress">0/0</span></div>
-    </div>
-    <h2>Live Logs</h2>
-    <div class="logs-container" id="logs"></div>
+  <div class="input-row">
+    <input type="text" id="taskInput" placeholder="Describe a coding task…" autocomplete="off" />
+    <button onclick="sendTask()">SEND</button>
   </div>
 </div>
 
 <script>
-  const msgContainer = document.getElementById('messages');
-  const logContainer = document.getElementById('logs');
-  const taskInput = document.getElementById('taskInput');
-  const sendBtn = document.getElementById('sendBtn');
-  const badge = document.getElementById('statusBadge');
+const chat = document.getElementById('chat');
+const input = document.getElementById('taskInput');
+const badge = document.getElementById('badge');
+const progressText = document.getElementById('progressText');
 
-  let ws;
-  function connectWS() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onopen = () => addLog('info', 'Connected to server');
-    ws.onclose = () => { addLog('error', 'Disconnected — reconnecting...'); setTimeout(connectWS, 3000); };
-    ws.onerror = () => {};
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'status') updateStatus(msg.data);
-        else if (msg.type === 'log') addLog(msg.data.level?.toLowerCase() || 'info', msg.data.message);
-        else if (msg.type === 'error') { addMsg('error', msg.data.message); addLog('error', msg.data.message); }
-        else if (msg.type === 'ack') addMsg('system', msg.data);
-      } catch {}
-    };
+// Track open detail blocks to group tool calls
+let currentDetailBlock = null;
+let currentDetailTools = null;
+
+// ── Agent tag colors ─────────────────────
+const TAG_CLASS = {
+  planner: 'tag-planner', coder_a: 'tag-coder_a', coder_b: 'tag-coder_b',
+  reviewer_a: 'tag-reviewer_a', reviewer_b: 'tag-reviewer_b',
+  tester: 'tag-tester', system: 'tag-system',
+};
+
+const AGENT_NAMES = {
+  planner: 'PLANNER', coder_a: 'CODER A · Claude', coder_b: 'CODER B · GPT-5.2',
+  reviewer_a: 'REVIEWER A · Claude', reviewer_b: 'REVIEWER B · GPT-5.2',
+  tester: 'TESTER', system: 'SYSTEM',
+};
+
+// ── Scroll helper ────────────────────────
+function scrollBottom() {
+  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+}
+
+// ── Add a prominent status message ───────
+function addStatus(text, extraClass = '') {
+  currentDetailBlock = null;
+  const div = document.createElement('div');
+  div.className = `msg msg-status ${extraClass}`;
+  div.textContent = text;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+// ── Add a user message ───────────────────
+function addUser(text) {
+  currentDetailBlock = null;
+  const div = document.createElement('div');
+  div.className = 'msg msg-user';
+  div.textContent = text;
+  chat.appendChild(div);
+  scrollBottom();
+}
+
+// ── Add a collapsible detail block ───────
+function addDetail(agent, title, body) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'msg msg-detail';
+
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+
+  const arrow = document.createElement('span');
+  arrow.className = 'arrow';
+  arrow.textContent = '▶';
+
+  const tag = document.createElement('span');
+  tag.className = `agent-tag ${TAG_CLASS[agent] || 'tag-system'}`;
+  tag.textContent = AGENT_NAMES[agent] || agent;
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = title;
+
+  summary.appendChild(arrow);
+  summary.appendChild(tag);
+  summary.appendChild(titleSpan);
+  details.appendChild(summary);
+
+  if (body) {
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'detail-body';
+    bodyDiv.textContent = body;
+    details.appendChild(bodyDiv);
   }
 
-  function addMsg(type, text) {
-    const div = document.createElement('div');
-    div.className = `msg msg-${type}`;
-    div.textContent = text;
-    msgContainer.appendChild(div);
-    msgContainer.scrollTop = msgContainer.scrollHeight;
+  wrapper.appendChild(details);
+  chat.appendChild(wrapper);
+  currentDetailBlock = details;
+  currentDetailTools = null;
+  scrollBottom();
+  return details;
+}
+
+// ── Add tool call inside current detail block ──
+function addToolCall(agent, toolName, args, result) {
+  // If we have an open detail block from the same agent, append tool info
+  if (!currentDetailBlock) {
+    addDetail(agent, `🔧 Tool calls`, '');
   }
 
-  function addLog(level, text) {
-    const div = document.createElement('div');
-    const cls = level === 'error' ? 'log-error' : level === 'warn' ? 'log-warn' : 'log-info';
-    div.className = `log-entry ${cls}`;
-    const time = new Date().toLocaleTimeString();
-    div.textContent = `${time} ${text}`;
-    logContainer.appendChild(div);
-    logContainer.scrollTop = logContainer.scrollHeight;
-    // Trim
-    while (logContainer.children.length > 300) logContainer.removeChild(logContainer.firstChild);
+  // Find or create tool list inside the detail body
+  let bodyDiv = currentDetailBlock.querySelector('.detail-body');
+  if (!bodyDiv) {
+    bodyDiv = document.createElement('div');
+    bodyDiv.className = 'detail-body';
+    currentDetailBlock.appendChild(bodyDiv);
   }
 
-  function updateStatus(data) {
-    const phase = data.phase || 'idle';
-    document.getElementById('phase').textContent = phase;
-    document.getElementById('branch').textContent = data.branch || '—';
-    document.getElementById('progress').textContent =
-      data.completed !== undefined ? `${data.completed}/${data.total || '?'}` : data.progress || '—';
+  const item = document.createElement('div');
+  item.className = 'tool-item';
+  item.innerHTML = `<span class="tool-name">⚡ ${esc(toolName)}</span>`;
+  if (args) item.innerHTML += ` <span class="tool-args">${esc(args)}</span>`;
+  bodyDiv.appendChild(item);
 
-    badge.textContent = phase.toUpperCase();
-    badge.className = 'status-badge ' + (
-      phase === 'idle' || phase === 'complete' ? 'status-idle' :
-      phase === 'stopped' ? 'status-error' : 'status-active'
-    );
+  if (result) {
+    const res = document.createElement('div');
+    res.style.cssText = 'padding:2px 8px; font-size:10px; color:var(--text-faint); max-height:120px; overflow-y:auto; margin-bottom:4px;';
+    res.textContent = result.substring(0, 500) + (result.length > 500 ? '…' : '');
+    bodyDiv.appendChild(res);
   }
+  scrollBottom();
+}
 
-  function sendTask() {
-    const task = taskInput.value.trim();
-    if (!task) return;
-    addMsg('user', task);
-    taskInput.value = '';
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'task', task }));
-    } else {
-      fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task })
-      }).then(r => r.json()).then(d => addMsg('system', `Task queued (${d.queue_size} in queue)`))
-        .catch(e => addMsg('error', `Failed to submit: ${e}`));
-    }
+// ── Handle incoming events ───────────────
+function handleEvent(evt) {
+  const { category, agent, title, detail, metadata } = evt;
+
+  switch (category) {
+    case 'status':
+      // Always show as prominent status line
+      let cls = '';
+      if (metadata?.phase === 'complete') cls = 'status-complete';
+      else if (title.includes('❌') || title.includes('Error')) cls = 'status-error';
+      addStatus(title, cls);
+      break;
+
+    case 'plan':
+      // Show plan prominently
+      addStatus(title + '\n' + detail, 'status-plan');
+      break;
+
+    case 'verdict':
+      // Show verdicts prominently
+      const v = (metadata?.verdict || '').toLowerCase();
+      const vcls = v === 'approve' ? 'status-verdict-approve'
+                 : v === 'rework' ? 'status-verdict-rework'
+                 : v === 'pass' ? 'status-verdict-pass'
+                 : v === 'fail' ? 'status-verdict-fail' : '';
+      addStatus(title, vcls);
+      // Collapsible detail for the review content
+      if (detail) addDetail(agent, `${AGENT_NAMES[agent] || agent} review details`, detail);
+      break;
+
+    case 'commit':
+      addStatus(title, 'status-commit');
+      break;
+
+    case 'error':
+      addStatus(title + (detail ? ': ' + detail : ''), 'status-error');
+      break;
+
+    case 'node_start':
+      // Collapsible: "▶ Coding started — Working on: ..."
+      addDetail(agent, title + (detail ? ` — ${detail}` : ''), '');
+      break;
+
+    case 'node_end':
+      // Collapsible end summary
+      if (detail) addDetail(agent, title, detail);
+      break;
+
+    case 'agent_think':
+      // Collapsible: agent is thinking
+      addDetail(agent, title, detail || '(processing…)');
+      break;
+
+    case 'agent_result':
+      // Collapsible: agent response
+      addDetail(agent, title, detail);
+      break;
+
+    case 'tool_call':
+      addToolCall(agent, detail ? title.replace(`🔧 ${agent} → `, '') : title, detail, '');
+      break;
+
+    case 'tool_result':
+      // Append result to the current tool block
+      addToolCall(agent, title.replace('📎 ', '').replace(' returned', ''), '', detail);
+      break;
+
+    default:
+      // Unknown category — show as detail
+      addDetail(agent, title, detail);
   }
+}
 
-  taskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
-  connectWS();
+// ── Update header status ─────────────────
+function updateHeader(data) {
+  const phase = data.phase || 'idle';
+  badge.textContent = phase.toUpperCase();
+  badge.className = 'badge ' + (
+    phase === 'idle' ? 'badge-idle' :
+    phase === 'complete' ? 'badge-done' :
+    phase === 'stopped' ? 'badge-error' : 'badge-active'
+  );
+  if (data.completed !== undefined) {
+    progressText.textContent = `${data.completed}/${data.total || '?'} items · ${data.branch || ''}`;
+  } else if (data.progress) {
+    progressText.textContent = data.progress;
+  }
+}
 
-  // Poll status periodically
-  setInterval(() => {
-    fetch('/api/status').then(r => r.json()).then(updateStatus).catch(() => {});
-  }, 5000);
+// ── WebSocket ────────────────────────────
+let ws;
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => {};
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => {};
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'event') handleEvent(msg.data);
+      else if (msg.type === 'status') updateHeader(msg.data);
+      else if (msg.type === 'error') addStatus(`❌ ${msg.data.message}`, 'status-error');
+      else if (msg.type === 'ack') addStatus(`✓ ${msg.data}`);
+    } catch {}
+  };
+}
+
+function sendTask() {
+  const task = input.value.trim();
+  if (!task) return;
+  addUser(task);
+  input.value = '';
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'task', task }));
+  } else {
+    fetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task }) })
+      .then(r => r.json()).then(d => addStatus(`✓ Task queued`))
+      .catch(e => addStatus(`❌ Failed: ${e}`, 'status-error'));
+  }
+}
+
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
+connectWS();
+setInterval(() => {
+  fetch('/api/status').then(r => r.json()).then(updateHeader).catch(() => {});
+}, 5000);
 </script>
 </body>
 </html>

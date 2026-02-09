@@ -1,6 +1,6 @@
 """Tests for the FastAPI web server endpoints."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,11 +12,12 @@ def client():
         ms.return_value.target_repo_path = "/tmp/test-repo"
         ms.return_value.max_output_chars = 10000
 
-        from fastapi.testclient import TestClient
+        with patch("app.web.server.run_workflow", new_callable=AsyncMock):
+            from fastapi.testclient import TestClient
 
-        from app.web.server import app
-        with TestClient(app) as c:
-            yield c
+            from app.web.server import app
+            with TestClient(app) as c:
+                yield c
 
 
 class TestStatusEndpoint:
@@ -37,16 +38,16 @@ class TestStatusEndpoint:
         assert "items_done" in data
 
 
-class TestLogsEndpoint:
-    def test_logs_returns_list(self, client):
-        resp = client.get("/api/logs")
+class TestEventsEndpoint:
+    def test_events_returns_list(self, client):
+        resp = client.get("/api/events")
         assert resp.status_code == 200
         data = resp.json()
-        assert "logs" in data
-        assert isinstance(data["logs"], list)
+        assert "events" in data
+        assert isinstance(data["events"], list)
 
-    def test_logs_limit(self, client):
-        resp = client.get("/api/logs?limit=5")
+    def test_events_limit(self, client):
+        resp = client.get("/api/events?limit=5")
         assert resp.status_code == 200
 
 
@@ -64,40 +65,3 @@ class TestUI:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "Daedalus" in resp.text or "DAEDALUS" in resp.text
-
-
-class _OkWS:
-    def __init__(self):
-        self.messages: list[str] = []
-
-    async def send_text(self, message: str):
-        self.messages.append(message)
-
-
-class _FailWS:
-    async def send_text(self, message: str):
-        raise RuntimeError("socket closed")
-
-
-class TestBroadcast:
-    @pytest.mark.asyncio
-    async def test_broadcast_removes_disconnected_clients(self, monkeypatch):
-        from app.web import server
-
-        ok = _OkWS()
-        bad = _FailWS()
-        monkeypatch.setattr(server, "_ws_clients", {ok, bad})
-
-        await server._broadcast("status", {"phase": "testing"})
-
-        assert len(ok.messages) == 1
-        assert ok in server._ws_clients
-        assert bad not in server._ws_clients
-
-    @pytest.mark.asyncio
-    async def test_broadcast_with_no_clients_is_noop(self, monkeypatch):
-        from app.web import server
-
-        monkeypatch.setattr(server, "_ws_clients", set())
-
-        await server._broadcast("status", {"phase": "idle"})

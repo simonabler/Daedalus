@@ -42,7 +42,7 @@ from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
 from app.tools.build import run_linter, run_tests
 from app.tools.filesystem import list_directory, read_file, write_file
 from app.tools.git import git_command, git_commit_and_push, git_create_branch, git_status
-from app.tools.shell import run_shell
+from app.tools.terminal import run_terminal
 
 logger = get_logger("core.nodes")
 
@@ -110,17 +110,17 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
 # ── Tool sets ─────────────────────────────────────────────────────────────
 
-PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_shell]
+PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_terminal]
 
 CODER_TOOLS = [
     read_file, write_file, list_directory,
-    run_shell, git_status, git_command,
+    run_terminal, git_status, git_command,
     run_tests, run_linter,
 ]
 
-REVIEWER_TOOLS = [read_file, list_directory, run_shell, git_status, git_command, run_tests, run_linter]
+REVIEWER_TOOLS = [read_file, list_directory, run_terminal, git_status, git_command, run_tests, run_linter]
 
-TESTER_TOOLS = [read_file, list_directory, run_shell, run_tests, run_linter, git_status]
+TESTER_TOOLS = [read_file, list_directory, run_terminal, run_tests, run_linter, git_status]
 
 
 # ── Helper: coder pair assignment ─────────────────────────────────────────
@@ -134,10 +134,10 @@ def _assign_coder_pair(item_index: int) -> tuple[str, str]:
 
 
 def _coder_label(role: str) -> str:
-    return {"coder_a": "Coder A (Claude)", "coder_b": "Coder B (GPT-5.3)"}.get(role, role)
+    return {"coder_a": "Coder A (Claude)", "coder_b": "Coder B (GPT-5.2)"}.get(role, role)
 
 def _reviewer_label(role: str) -> str:
-    return {"reviewer_a": "Reviewer A (Claude)", "reviewer_b": "Reviewer B (GPT-5.3)"}.get(role, role)
+    return {"reviewer_a": "Reviewer A (Claude)", "reviewer_b": "Reviewer B (GPT-5.2)"}.get(role, role)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -172,7 +172,7 @@ def planner_plan_node(state: GraphState) -> dict:
         f"Repository root: {state.repo_root}",
         f"Current branch: {state.branch_name or 'not set'}",
         "",
-        "NOTE: This system uses two coders (Coder A = Claude, Coder B = GPT-5.3).",
+        "NOTE: This system uses two coders (Coder A = Claude, Coder B = GPT-5.2).",
         "They alternate: even-numbered items go to Coder A, odd to Coder B.",
         "Each coder's work is peer-reviewed by the other before testing.",
         "Both coders share long-term memory files in memory/.",
