@@ -13,6 +13,7 @@ Coder assignment alternates per TODO item:
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from langgraph.graph import StateGraph, END
 
@@ -31,11 +32,29 @@ from app.core.nodes import (
 
 logger = get_logger("core.orchestrator")
 
+# ── Shutdown coordination ────────────────────────────────────────────────
+_shutdown_event = threading.Event()
+
+
+def request_shutdown() -> None:
+    """Signal the workflow to stop after the current node finishes."""
+    _shutdown_event.set()
+    logger.info("Shutdown requested — workflow will stop after current node")
+
+
+def reset_shutdown() -> None:
+    """Clear the shutdown flag (e.g. for testing)."""
+    _shutdown_event.clear()
+
+
+def is_shutdown_requested() -> bool:
+    return _shutdown_event.is_set()
+
 
 # ── Routing functions ─────────────────────────────────────────────────────
 
 def _route_after_plan(state: GraphState) -> str:
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     if not state.todo_items:
         return "stopped"
@@ -43,14 +62,14 @@ def _route_after_plan(state: GraphState) -> str:
 
 
 def _route_after_coder(state: GraphState) -> str:
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     return "peer_review"
 
 
 def _route_after_peer_review(state: GraphState) -> str:
     """After peer review: always go to learn node (extracts insights), then route."""
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     # Always extract learnings first, even on REWORK
     return "learn"
@@ -58,7 +77,7 @@ def _route_after_peer_review(state: GraphState) -> str:
 
 def _route_after_learn(state: GraphState) -> str:
     """After learning extraction: APPROVE → planner review, REWORK → back to coder."""
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     if state.phase == WorkflowPhase.CODING:
         # Peer reviewer said REWORK — go back to coder
@@ -68,7 +87,7 @@ def _route_after_learn(state: GraphState) -> str:
 
 def _route_after_planner_review(state: GraphState) -> str:
     """After planner review: APPROVE → tester, REWORK → back to coder."""
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     if state.phase == WorkflowPhase.CODING:
         return "coder"
@@ -76,7 +95,7 @@ def _route_after_planner_review(state: GraphState) -> str:
 
 
 def _route_after_tester(state: GraphState) -> str:
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     if state.phase == WorkflowPhase.CODING:
         # Tests failed — back to original coder
@@ -85,12 +104,14 @@ def _route_after_tester(state: GraphState) -> str:
 
 
 def _route_after_decide(state: GraphState) -> str:
-    if state.phase == WorkflowPhase.STOPPED:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
     return "commit"
 
 
 def _route_after_commit(state: GraphState) -> str:
+    if _shutdown_event.is_set():
+        return "complete"
     if state.phase == WorkflowPhase.COMPLETE:
         return "complete"
     if state.phase == WorkflowPhase.CODING:

@@ -386,11 +386,12 @@ function connectWS() {
   ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
+      console.log('WS event:', msg);
       if (msg.type === 'event') handleEvent(msg.data);
       else if (msg.type === 'status') updateHeader(msg.data);
       else if (msg.type === 'error') addStatus(`❌ ${msg.data.message}`, 'status-error');
       else if (msg.type === 'ack') addStatus(`✓ ${msg.data}`);
-    } catch {}
+    } catch (err) { console.warn('WS parse error:', err, e.data); }
   };
 }
 

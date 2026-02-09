@@ -32,6 +32,15 @@ from app.core.logging import get_logger
 
 logger = get_logger("core.events")
 
+# ── Event loop reference for cross-thread delivery ───────────────────────
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Register the main asyncio event loop for cross-thread event delivery."""
+    global _loop
+    _loop = loop
+
 
 class EventCategory(str, Enum):
     NODE_START = "node_start"
@@ -76,7 +85,7 @@ _history: deque[WorkflowEvent] = deque(maxlen=1000)
 
 
 def emit(event: WorkflowEvent) -> None:
-    """Emit an event synchronously. Safe to call from sync node code."""
+    """Emit an event synchronously. Safe to call from any thread."""
     _history.append(event)
     logger.debug("EVENT | %s | %s | %s", event.category.value, event.agent, event.title)
 
@@ -87,13 +96,21 @@ def emit(event: WorkflowEvent) -> None:
         except Exception as e:
             logger.warning("Sync listener error: %s", e)
 
-    # Schedule async listeners if there's a running loop
-    for listener in _async_listeners:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(listener(event))
-        except RuntimeError:
-            pass  # no event loop — skip async listeners
+    # Schedule async listeners into the main event loop (thread-safe)
+    if _loop is not None and not _loop.is_closed():
+        for listener in _async_listeners:
+            try:
+                _loop.call_soon_threadsafe(asyncio.ensure_future, listener(event))
+            except RuntimeError:
+                pass  # loop already closed
+    else:
+        # Fallback: try current thread's loop (works when called from async context)
+        for listener in _async_listeners:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(listener(event))
+            except RuntimeError:
+                pass
 
 
 def subscribe_sync(listener: Callable[[WorkflowEvent], Any]) -> None:

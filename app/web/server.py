@@ -19,9 +19,9 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.core.config import get_settings
-from app.core.events import WorkflowEvent, get_history, subscribe_async
+from app.core.events import WorkflowEvent, get_history, set_event_loop, subscribe_async
 from app.core.logging import get_logger
-from app.core.orchestrator import run_workflow
+from app.core.orchestrator import request_shutdown, reset_shutdown, run_workflow
 from app.core.state import GraphState, WorkflowPhase
 
 logger = get_logger("web.server")
@@ -29,7 +29,7 @@ logger = get_logger("web.server")
 # ── In-memory state ───────────────────────────────────────────────────────
 _current_state: GraphState | None = None
 _ws_clients: set[WebSocket] = set()
-_task_queue: asyncio.Queue = asyncio.Queue()
+_task_queue: asyncio.Queue | None = None
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -130,13 +130,27 @@ async def _process_tasks():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _task_queue
+    # Create queue on the current event loop
+    _task_queue = asyncio.Queue()
+    # Clear any previous shutdown flag (important for test re-runs)
+    reset_shutdown()
+    # Register main event loop for cross-thread event delivery
+    set_event_loop(asyncio.get_running_loop())
     # Subscribe to event bus
     subscribe_async(_broadcast_event)
     # Start background worker
     worker = asyncio.create_task(_process_tasks())
     logger.info("Web server started — event bus wired, worker running")
     yield
+    # Graceful shutdown: signal workflow to stop, then cancel the worker
+    request_shutdown()
     worker.cancel()
+    try:
+        await worker
+    except asyncio.CancelledError:
+        pass
+    logger.info("Lifespan cleanup complete")
 
 
 app = FastAPI(title="Daedadus", version="0.2.0", lifespan=lifespan)
