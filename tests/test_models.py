@@ -10,6 +10,7 @@ def _settings(**overrides):
         "planner_model": "gpt-4o-mini",
         "coder_a_model": "claude-sonnet-4-20250514",
         "coder_b_model": "gpt-5.2",
+        "documenter_model": "gpt-4o-mini",
         "tester_model": "gpt-4o-mini",
         "openai_api_key": "openai-test-key",
         "anthropic_api_key": "anthropic-test-key",
@@ -74,3 +75,14 @@ def test_coder_b_openai_model_uses_openai_factory(monkeypatch):
     llm = models.get_llm("coder_b")
 
     assert llm == "ok-openai"
+
+
+def test_documenter_uses_openai_factory(monkeypatch):
+    from app.agents import models
+
+    monkeypatch.setattr(models, "get_settings", lambda: _settings(documenter_model="gpt-4o-mini"))
+    monkeypatch.setattr(models, "_make_openai", lambda *args, **kwargs: "ok-doc")
+
+    llm = models.get_llm("documenter")
+
+    assert llm == "ok-doc"

@@ -13,22 +13,23 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
-    # ── LLM keys ──────────────────────────────────────────────────────────
+    # LLM keys
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
-    # ── LLM model identifiers ────────────────────────────────────────────
+    # LLM model identifiers
     planner_model: str = "gpt-4o-mini"
-    coder_a_model: str = "claude-sonnet-4-20250514"   # Coder A — Claude
-    coder_b_model: str = "gpt-5.2"                     # Coder B — gpt-5.2
+    coder_a_model: str = "claude-sonnet-4-20250514"  # Coder A - Claude
+    coder_b_model: str = "gpt-5.2"  # Coder B - GPT-5.2
+    documenter_model: str = "gpt-4o-mini"
     tester_model: str = "gpt-4o-mini"
 
-    # Legacy alias (kept for backwards compat if referenced elsewhere)
+    # Legacy alias (kept for backwards compatibility)
     @property
     def coder_model(self) -> str:
         return self.coder_a_model
 
-    # ── Telegram ──────────────────────────────────────────────────────────
+    # Telegram
     telegram_bot_token: str = ""
     telegram_allowed_user_ids: str = ""
 
@@ -38,30 +39,31 @@ class Settings(BaseSettings):
             return []
         return [int(uid.strip()) for uid in self.telegram_allowed_user_ids.split(",") if uid.strip()]
 
-    # ── Web UI ────────────────────────────────────────────────────────────
+    # Web UI
     web_host: str = "127.0.0.1"
     web_port: int = 8420
 
-    # ── Target repo ───────────────────────────────────────────────────────
+    # Target repo
     target_repo_path: str = ""
 
     @field_validator("target_repo_path")
     @classmethod
-    def _resolve_repo(cls, v: str) -> str:
-        if v:
-            return str(Path(v).expanduser().resolve())
-        return v
+    def _resolve_repo(cls, value: str) -> str:
+        if value:
+            return str(Path(value).expanduser().resolve())
+        return value
 
-    # ── Git ────────────────────────────────────────────────────────────────
+    # Git
     git_author_name: str = "daedalus"
     git_author_email: str = "daedalus@local"
 
-    # ── Safety ─────────────────────────────────────────────────────────────
+    # Safety
     max_iterations_per_item: int = 5
+    max_rework_cycles_per_item: int = 3
     shell_timeout_seconds: int = 120
     max_output_chars: int = 12_000
 
-    # ── Logging ────────────────────────────────────────────────────────────
+    # Logging
     log_level: str = "INFO"
     log_file: str = "logs/agent.log"
 

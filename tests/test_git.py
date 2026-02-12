@@ -74,6 +74,18 @@ class TestCommandValidation:
         assert "OK" in result
         assert "init" in result
 
+    def test_shell_operator_and_blocked(self, git_repo):
+        from app.tools.git import git_command
+
+        result = git_command.invoke({"command": "git log --oneline && echo PWN"})
+        assert "BLOCKED" in result
+
+    def test_shell_operator_pipe_blocked(self, git_repo):
+        from app.tools.git import git_command
+
+        result = git_command.invoke({"command": "git diff | cat"})
+        assert "BLOCKED" in result
+
     def test_unknown_subcommand_blocked(self, git_repo):
         from app.tools.git import git_command
 
@@ -84,7 +96,7 @@ class TestCommandValidation:
         from app.tools.git import git_command
 
         result = git_command.invoke({"command": "ls -la"})
-        assert "ERROR" in result
+        assert "ERROR" in result or "BLOCKED" in result
 
 
 class TestGitCreateBranch:

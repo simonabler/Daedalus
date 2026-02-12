@@ -7,9 +7,10 @@ class TestSettings:
     def test_defaults(self):
         with patch.dict("os.environ", {}, clear=True):
             from app.core.config import Settings
-            s = Settings()
+            s = Settings(_env_file=None)
             assert s.web_port == 8420
             assert s.max_iterations_per_item == 5
+            assert s.max_rework_cycles_per_item == 3
             assert s.planner_model == "gpt-4o-mini"
 
     def test_telegram_ids_parsing(self):
@@ -79,14 +80,22 @@ class TestTodoItem:
 
 class TestDualCoderSettings:
     def test_coder_a_model_default(self):
-        from app.core.config import Settings
-        s = Settings()
-        assert s.coder_a_model == "claude-sonnet-4-20250514"
+        with patch.dict("os.environ", {}, clear=True):
+            from app.core.config import Settings
+            s = Settings(_env_file=None)
+            assert s.coder_a_model == "claude-sonnet-4-20250514"
 
     def test_coder_b_model_default(self):
-        from app.core.config import Settings
-        s = Settings()
-        assert s.coder_b_model == "gpt-5.2"
+        with patch.dict("os.environ", {}, clear=True):
+            from app.core.config import Settings
+            s = Settings(_env_file=None)
+            assert s.coder_b_model == "gpt-5.2"
+
+    def test_documenter_model_default(self):
+        with patch.dict("os.environ", {}, clear=True):
+            from app.core.config import Settings
+            s = Settings(_env_file=None)
+            assert s.documenter_model == "gpt-4o-mini"
 
     def test_coder_model_legacy_property(self):
         from app.core.config import Settings

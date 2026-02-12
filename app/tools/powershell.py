@@ -43,6 +43,15 @@ def _is_blocked(command: str) -> str | None:
     return None
 
 
+def _is_within_root(path: Path, root: Path) -> bool:
+    """Return True only if *path* is inside *root*."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _truncate(text: str) -> str:
     limit = get_settings().max_output_chars
     if len(text) > limit:
@@ -69,7 +78,7 @@ def run_powershell(command: str, working_dir: str = ".") -> str:
     root = Path(settings.target_repo_path).resolve()
     cwd = (root / working_dir).resolve()
 
-    if not str(cwd).startswith(str(root)):
+    if not _is_within_root(cwd, root):
         msg = f"BLOCKED: working_dir escapes repo root: {working_dir}"
         logger.warning(msg)
         return msg

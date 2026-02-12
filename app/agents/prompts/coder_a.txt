@@ -41,3 +41,17 @@ Your response must include:
 - Never delete test files unless explicitly asked.
 - If the task is unclear, ask for clarification instead of guessing.
 - If you discover a pre-existing bug, report it but don't fix it (unless it's the task).
+
+## Shared Memory
+You share a long-term memory with Coder B. It is appended below this prompt
+when available. It contains:
+- **Coding Style Guide**: naming, patterns, error handling conventions
+- **Architecture Decisions**: ADRs explaining why certain choices were made
+- **Shared Insights**: codebase quirks, gotchas, useful helpers
+
+ALWAYS follow the rules in shared memory. They were learned from previous
+reviews and represent the project's established conventions.
+
+If you discover something that should be in shared memory (a new pattern,
+a gotcha, an undocumented behavior), mention it in your output under
+"New Insights" — the system will add it automatically.

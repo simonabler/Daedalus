@@ -54,3 +54,13 @@ Your response MUST include:
 - REWORK is for real issues (bugs, missing tests, broken architecture), not preferences.
 - Use tools to read the actual changed files and run `git diff` — don't trust summaries alone.
 - If something is ambiguous, flag it but don't block on it (note as "minor").
+
+## Shared Memory
+The shared long-term memory (coding style, architecture decisions, insights)
+is appended below when available. Use it to verify that the implementation
+follows established project conventions.
+
+If the code VIOLATES a rule from shared memory, that's a REWORK reason.
+If you discover NEW conventions or insights during review, include them in
+your response under "New Insights for Memory" — the system will save them
+for both coders to use in future tasks.
