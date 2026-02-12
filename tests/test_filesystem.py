@@ -45,6 +45,18 @@ class TestResolvesSafe:
             with pytest.raises(PathEscapeError):
                 _resolve_safe("/etc/passwd")
 
+    def test_prefix_bypass_escape_blocked(self, setup_test_repo):
+        from app.tools.filesystem import PathEscapeError, _resolve_safe
+
+        sibling = setup_test_repo.parent / f"{setup_test_repo.name}2"
+        sibling.mkdir()
+        (sibling / "secret.txt").write_text("secret")
+
+        with patch("app.tools.filesystem.get_settings") as ms:
+            ms.return_value.target_repo_path = str(setup_test_repo)
+            with pytest.raises(PathEscapeError):
+                _resolve_safe(f"../{sibling.name}/secret.txt")
+
 
 class TestReadFile:
     def test_read_existing(self, setup_test_repo):

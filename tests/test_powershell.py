@@ -47,6 +47,17 @@ class TestSandbox:
         result = run_powershell.invoke({"command": "Get-ChildItem", "working_dir": "../../../"})
         assert "BLOCKED" in result or "ERROR" in result
 
+    def test_prefix_bypass_working_dir_blocked(self, mock_settings):
+        from app.tools.powershell import run_powershell
+
+        sibling = mock_settings.parent / f"{mock_settings.name}2"
+        sibling.mkdir()
+
+        result = run_powershell.invoke(
+            {"command": "Get-ChildItem -Name", "working_dir": f"../{sibling.name}"}
+        )
+        assert "BLOCKED" in result
+
     def test_normal_command_succeeds(self, mock_settings):
         from app.tools.powershell import run_powershell
 

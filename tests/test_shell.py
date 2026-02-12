@@ -65,6 +65,15 @@ class TestSandbox:
         result = run_shell.invoke({"command": "ls", "working_dir": "../../../"})
         assert "BLOCKED" in result or "ERROR" in result
 
+    def test_prefix_bypass_working_dir_blocked(self, mock_settings):
+        from app.tools.shell import run_shell
+
+        sibling = mock_settings.parent / f"{mock_settings.name}2"
+        sibling.mkdir()
+
+        result = run_shell.invoke({"command": "ls", "working_dir": f"../{sibling.name}"})
+        assert "BLOCKED" in result
+
     def test_normal_command_succeeds(self, mock_settings):
         from app.tools.shell import run_shell
 

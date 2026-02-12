@@ -32,10 +32,12 @@ def _resolve_safe(relative_path: str) -> Path:
         pass
 
     target = (root / relative_path).resolve()
-    if not str(target).startswith(str(root)):
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
         raise PathEscapeError(
             f"Path escapes repo sandbox: {relative_path!r} resolved to {target}"
-        )
+        ) from exc
     return target
 
 

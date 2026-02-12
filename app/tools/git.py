@@ -1,4 +1,4 @@
-"""Safe Git operations — strict allow/blocklist and commit gate enforcement.
+"""Safe Git operations with strict allow/blocklist enforcement.
 
 Git commands run inside the target repo root. Merge/rebase/reset are forbidden.
 Commits require explicit planner approval (enforced at the orchestrator level).
@@ -6,7 +6,10 @@ Commits require explicit planner approval (enforced at the orchestrator level).
 
 from __future__ import annotations
 
+import os
+import platform
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -17,15 +20,29 @@ from app.core.logging import get_logger
 
 logger = get_logger("tools.git")
 
-# ── Allowed git sub-commands ─────────────────────────────────────────────
+# Allowed git sub-commands.
 ALLOWED_SUBCOMMANDS = {
-    "status", "diff", "add", "commit", "checkout", "switch",
-    "push", "pull", "fetch", "log", "branch", "show",
-    "stash", "tag", "remote", "config", "rev-parse",
+    "status",
+    "diff",
+    "add",
+    "commit",
+    "checkout",
+    "switch",
+    "push",
+    "pull",
+    "fetch",
+    "log",
+    "branch",
+    "show",
+    "stash",
+    "tag",
+    "remote",
+    "config",
+    "rev-parse",
 }
 
-# ── Explicitly blocked patterns ──────────────────────────────────────────
-BLOCKED_PATTERNS: list[re.Pattern] = [
+# Explicitly blocked patterns.
+BLOCKED_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bgit\s+merge\b"),
     re.compile(r"\bgit\s+rebase\b"),
     re.compile(r"\bgit\s+reset\s+--hard\b"),
@@ -34,23 +51,38 @@ BLOCKED_PATTERNS: list[re.Pattern] = [
     re.compile(r"\bgit\s+push\s+.*-f\b"),
 ]
 
+# Block shell control operators explicitly.
+BLOCKED_SHELL_TOKENS = {"&&", "||", "|", ";", "`"}
+
+
+def _split_command(command: str) -> list[str]:
+    """Split a git command string into argv."""
+    posix = not platform.system().lower().startswith("win")
+    return shlex.split(command, posix=posix)
+
 
 def _validate_git_command(command: str) -> str | None:
     """Return error message if blocked, else None."""
     for pattern in BLOCKED_PATTERNS:
         if pattern.search(command):
-            return f"BLOCKED: forbidden git operation — {pattern.pattern}"
+            return f"BLOCKED: forbidden git operation - {pattern.pattern}"
 
-    # Extract subcommand
-    parts = command.strip().split()
+    try:
+        parts = _split_command(command.strip())
+    except ValueError as exc:
+        return f"ERROR: invalid git command syntax: {exc}"
+
     if not parts or parts[0] != "git":
         return "ERROR: command must start with 'git'"
     if len(parts) < 2:
         return "ERROR: incomplete git command"
+    if any(token in BLOCKED_SHELL_TOKENS for token in parts[1:]):
+        return "BLOCKED: shell control operators are not allowed in git commands"
 
     sub = parts[1].lstrip("-")
     if sub not in ALLOWED_SUBCOMMANDS:
-        return f"BLOCKED: git subcommand '{sub}' is not allowed. Permitted: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}"
+        allowed = ", ".join(sorted(ALLOWED_SUBCOMMANDS))
+        return f"BLOCKED: git subcommand '{sub}' is not allowed. Permitted: {allowed}"
 
     return None
 
@@ -64,17 +96,18 @@ def _run_git(command: str) -> str:
         return f"ERROR: repo root does not exist: {root}"
 
     logger.info("git_tool   | %s", command)
+    args = _split_command(command)
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            args,
+            shell=False,
             cwd=str(root),
             capture_output=True,
             text=True,
             timeout=60,
             env={
-                **dict(__import__("os").environ),
+                **dict(os.environ),
                 "GIT_AUTHOR_NAME": settings.git_author_name,
                 "GIT_AUTHOR_EMAIL": settings.git_author_email,
                 "GIT_COMMITTER_NAME": settings.git_author_name,
@@ -94,7 +127,6 @@ def _run_git(command: str) -> str:
     if result.stderr:
         output += ("\n--- stderr ---\n" if output else "") + result.stderr.strip()
 
-    # Truncate
     limit = settings.max_output_chars
     if len(output) > limit:
         half = limit // 2
@@ -103,9 +135,6 @@ def _run_git(command: str) -> str:
     status = "OK" if result.returncode == 0 else f"FAILED (exit {result.returncode})"
     logger.info("git_tool   | exit=%d | output_len=%d", result.returncode, len(output))
     return f"[{status}]\n{output}" if output else f"[{status}]"
-
-
-# ── LangChain Tools ──────────────────────────────────────────────────────
 
 
 @tool
@@ -119,10 +148,12 @@ def git_command(command: str) -> str:
     command = command.strip()
     if not command.startswith("git "):
         command = f"git {command}"
+
     error = _validate_git_command(command)
     if error:
         logger.warning("git_tool   | %s | %s", command, error)
         return error
+
     return _run_git(command)
 
 
@@ -131,7 +162,6 @@ def git_create_branch(branch_name: str) -> str:
     """Create and switch to a new feature branch."""
     if not branch_name.startswith("feature/"):
         branch_name = f"feature/{branch_name}"
-    # Sanitize
     safe = re.sub(r"[^a-zA-Z0-9/_-]", "-", branch_name)
     return _run_git(f"git checkout -b {safe}")
 
@@ -145,21 +175,16 @@ def git_commit_and_push(message: str, push: bool = True) -> str:
     """
     results: list[str] = []
 
-    # Stage
     results.append(_run_git("git add -A"))
 
-    # Check there's something to commit
     status = _run_git("git status --porcelain")
     if "[OK]" in status and status.strip().endswith("[OK]"):
-        return "Nothing to commit — working tree clean."
+        return "Nothing to commit - working tree clean."
 
-    # Commit
     safe_msg = message.replace('"', '\\"')
     results.append(_run_git(f'git commit -m "{safe_msg}"'))
 
-    # Push
     if push:
-        # Get current branch
         branch_result = _run_git("git rev-parse --abbrev-ref HEAD")
         branch = branch_result.split("\n")[-1].strip() if "[OK]" in branch_result else "HEAD"
         results.append(_run_git(f"git push -u origin {branch}"))
