@@ -16,6 +16,7 @@ AgentRole = Literal[
     "planner",
     "coder_a", "coder_b",
     "reviewer_a", "reviewer_b",
+    "documenter",
     "tester",
 ]
 
@@ -107,6 +108,17 @@ def get_llm(role: AgentRole) -> BaseChatModel:
             temperature=0.1,
         )
 
+    if role == "documenter":
+        model = settings.documenter_model
+        return _build_for_model(
+            role=role,
+            model=model,
+            openai_api_key=settings.openai_api_key,
+            anthropic_api_key=settings.anthropic_api_key,
+            temperature=0.1,
+            max_tokens=4096,
+        )
+
     if role == "tester":
         model = settings.tester_model
         key = _require_openai_key(role, model, settings.openai_api_key)
@@ -123,6 +135,7 @@ def load_system_prompt(role: AgentRole) -> str:
         "coder_b": "coder_b.txt",
         "reviewer_a": "peer_reviewer_a.txt",
         "reviewer_b": "peer_reviewer_b.txt",
+        "documenter": "documenter.txt",
         "tester": "tester.txt",
     }
     prompt_file = PROMPTS_DIR / mapping[role]

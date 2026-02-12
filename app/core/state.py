@@ -24,6 +24,9 @@ class TodoItem(BaseModel):
     """A single work item from the plan."""
     id: str
     description: str
+    task_type: str = "coding"  # coding | documentation | testing | ops
+    assigned_agent: str = ""  # coder_a | coder_b | documenter
+    assigned_reviewer: str = ""  # reviewer_a | reviewer_b
     acceptance_criteria: list[str] = Field(default_factory=list)
     verification_commands: list[str] = Field(default_factory=list)
     status: ItemStatus = ItemStatus.PENDING
@@ -31,6 +34,8 @@ class TodoItem(BaseModel):
     test_report: str = ""
     commit_message: str = ""
     iteration_count: int = 0
+    rework_count: int = 0
+    test_fail_count: int = 0
 
 
 class WorkflowPhase(StrEnum):
@@ -55,6 +60,9 @@ class GraphState(BaseModel):
 
     # ── User request ──────────────────────────────────────────────────
     user_request: str = ""
+    execution_platform: str = ""
+    input_intent: str = ""
+    planner_response: str = ""
 
     # ── Plan & progress ───────────────────────────────────────────────
     todo_items: list[TodoItem] = Field(default_factory=list)

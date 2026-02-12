@@ -110,6 +110,7 @@
   .tag-coder_b { background: #1a3030; color: #34d399; }
   .tag-reviewer_a { background: #2a1a40; color: #c084fc; }
   .tag-reviewer_b { background: #1a3a30; color: #6ee7b7; }
+  .tag-documenter { background: #2d2532; color: #f9a8d4; }
   .tag-tester { background: #3a2a10; color: var(--yellow); }
   .tag-system { background: var(--surface3); color: var(--text-dim); }
 
@@ -180,12 +181,14 @@ let currentDetailTools = null;
 // ── Agent tag colors ─────────────────────
 const TAG_CLASS = {
   planner: 'tag-planner', coder_a: 'tag-coder_a', coder_b: 'tag-coder_b',
+  documenter: 'tag-documenter',
   reviewer_a: 'tag-reviewer_a', reviewer_b: 'tag-reviewer_b',
   tester: 'tag-tester', system: 'tag-system',
 };
 
 const AGENT_NAMES = {
   planner: 'PLANNER', coder_a: 'CODER A · Claude', coder_b: 'CODER B · GPT-5.2',
+  documenter: 'DOCUMENTER',
   reviewer_a: 'REVIEWER A · Claude', reviewer_b: 'REVIEWER B · GPT-5.2',
   tester: 'TESTER', system: 'SYSTEM',
 };
@@ -297,6 +300,14 @@ function handleEvent(evt) {
       if (metadata?.phase === 'complete') cls = 'status-complete';
       else if (title.includes('❌') || title.includes('Error')) cls = 'status-error';
       addStatus(title, cls);
+      if (metadata) {
+        updateHeader({
+          phase: metadata.phase || 'idle',
+          completed: metadata.items_done,
+          total: metadata.items_total,
+          branch: metadata.branch || '',
+        });
+      }
       break;
 
     case 'plan':
@@ -412,7 +423,9 @@ function sendTask() {
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
 connectWS();
 setInterval(() => {
-  fetch('/api/status').then(r => r.json()).then(updateHeader).catch(() => {});
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    fetch('/api/status').then(r => r.json()).then(updateHeader).catch(() => {});
+  }
 }, 5000);
 </script>
 </body>

@@ -74,6 +74,11 @@ class TestRouting:
         state = GraphState(phase=WorkflowPhase.CODING)
         assert _route_after_learn(state) == "coder"
 
+    def test_route_after_learn_escalated_testing(self):
+        from app.core.orchestrator import _route_after_learn
+        state = GraphState(phase=WorkflowPhase.TESTING)
+        assert _route_after_learn(state) == "tester"
+
     def test_route_after_planner_review_approve(self):
         from app.core.orchestrator import _route_after_planner_review
         state = GraphState(phase=WorkflowPhase.TESTING)
@@ -151,6 +156,24 @@ Here's the plan:
         from app.core.nodes import _parse_plan_from_result
         items = _parse_plan_from_result("No items here, just text.")
         assert len(items) == 0
+
+    def test_parse_json_plan(self):
+        from app.core.nodes import _parse_plan_from_result
+        text = """
+{
+  "plan": [
+    {
+      "description": "Update README",
+      "task_type": "documentation",
+      "acceptance_criteria": ["README reflects new flow"],
+      "verification_commands": []
+    }
+  ]
+}
+"""
+        items = _parse_plan_from_result(text)
+        assert len(items) == 1
+        assert items[0].task_type == "documentation"
 
 
 class TestExtractCommitMessage:
