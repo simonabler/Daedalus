@@ -56,6 +56,7 @@ from app.tools.terminal import run_terminal
 logger = get_logger("core.nodes")
 
 CHECKBOX_RE = re.compile(r"^- \[(?P<mark>[ xX])\]\s*(?:Item\s+\d+:\s*)?(?P<desc>.+)$")
+ROUTER_INTENTS = {"code", "status", "research", "resume"}
 
 
 # -- Helper: invoke LLM with tools + event emission -----------------------
@@ -238,6 +239,78 @@ def _classify_request_intent(user_request: str) -> str:
     return "new_task"
 
 
+def _heuristic_router_intent(user_request: str) -> str | None:
+    """Fast intent heuristic for router gate."""
+    text = (user_request or "").strip().lower()
+    if not text:
+        return "status"
+
+    resume_markers = (
+        "resume",
+        "continue workflow",
+        "continue task",
+        "continue where",
+        "fortsetzen",
+        "weiterarbeiten",
+        "weiter machen",
+        "nach neustart",
+        "wieder aufnehmen",
+    )
+    if any(marker in text for marker in resume_markers):
+        return "resume"
+
+    status_markers = (
+        "status",
+        "progress",
+        "fortschritt",
+        "current state",
+        "aktueller stand",
+        "wo stehen wir",
+    )
+    if any(marker in text for marker in status_markers):
+        return "status"
+
+    research_markers = (
+        "research",
+        "recherche",
+        "investigate",
+        "analyse",
+        "analyze",
+        "compare",
+        "warum",
+        "why",
+    )
+    if any(marker in text for marker in research_markers):
+        return "research"
+
+    if is_programming_request(text):
+        return "code"
+
+    return None
+
+
+def _parse_router_json(result: str) -> tuple[str | None, float]:
+    """Parse strict JSON router output and validate intent."""
+    try:
+        parsed = json.loads((result or "").strip())
+    except json.JSONDecodeError:
+        return None, 0.0
+
+    if not isinstance(parsed, dict):
+        return None, 0.0
+
+    intent = str(parsed.get("intent", "")).strip().lower()
+    if intent not in ROUTER_INTENTS:
+        return None, 0.0
+
+    try:
+        confidence = float(parsed.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    return intent, confidence
+
+
 def _owner_to_agent(owner: str) -> str:
     owner_text = owner.lower()
     if "documenter" in owner_text:
@@ -363,6 +436,114 @@ def _answer_question_directly(state: GraphState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# NODE: router
+# ---------------------------------------------------------------------------
+
+def router_node(state: GraphState) -> dict:
+    """Intent gate before any planning/coding workflow starts."""
+    emit_node_start("planner", "Router", item_desc=state.user_request[:100])
+    emit_status("planner", "Classifying request intent", **_progress_meta(state, "planning"))
+
+    heuristic_intent = _heuristic_router_intent(state.user_request)
+    if heuristic_intent in ROUTER_INTENTS:
+        emit_node_end("planner", "Router", f"Heuristic intent: {heuristic_intent}")
+        return {"input_intent": heuristic_intent}
+
+    router_prompt = (
+        "Classify the user request into ONE intent only.\n"
+        "Allowed intents: code, status, research, resume.\n"
+        "Return STRICT JSON only, no markdown:\n"
+        '{"intent":"code|status|research|resume","confidence":0.0}\n\n'
+        f"User request:\n{state.user_request}\n"
+    )
+    llm_result = _invoke_agent("planner", [HumanMessage(content=router_prompt)])
+    llm_intent, confidence = _parse_router_json(llm_result)
+
+    if llm_intent:
+        emit_node_end("planner", "Router", f"LLM intent: {llm_intent} (confidence={confidence:.2f})")
+        return {"input_intent": llm_intent}
+
+    fallback = "code" if is_programming_request(state.user_request or "") else "research"
+    emit_status(
+        "planner",
+        f"Router fallback intent: {fallback} (LLM output not parseable JSON)",
+        **_progress_meta(state, "planning"),
+    )
+    emit_node_end("planner", "Router", f"Fallback intent: {fallback}")
+    return {"input_intent": fallback}
+
+
+# ---------------------------------------------------------------------------
+# NODE: context_loader (placeholder for Patch 02)
+# ---------------------------------------------------------------------------
+
+def context_loader_node(state: GraphState) -> dict:
+    """Prepare context stage before planner (no mutation yet)."""
+    emit_node_start("planner", "Context Loader", item_desc=state.user_request[:100])
+    emit_status("planner", "Context pre-load step ready (placeholder)", **_progress_meta(state, "planning"))
+    emit_node_end("planner", "Context Loader", "Proceeding to planner")
+    return {"input_intent": "code"}
+
+
+# ---------------------------------------------------------------------------
+# NODE: status / research / resume (minimal non-coding branches)
+# ---------------------------------------------------------------------------
+
+def status_node(state: GraphState) -> dict:
+    """Non-coding status response branch (no write/git tools)."""
+    emit_node_start("planner", "Status", item_desc=state.user_request[:100])
+    summary = state.get_progress_summary()
+    message = f"Workflow status:\n{summary}"
+    emit_status("planner", "Status request handled without coding", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Status", "Status response prepared")
+    return {
+        "planner_response": message,
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "status_answered",
+        "input_intent": "status",
+    }
+
+
+def research_node(state: GraphState) -> dict:
+    """Research branch without repository mutation tools."""
+    emit_node_start("planner", "Research", item_desc=state.user_request[:100])
+    prompt = (
+        "You are a research assistant for a software workflow.\n"
+        "Answer the user's request in analysis mode only.\n"
+        "Do not propose or perform code/file/git changes.\n\n"
+        f"User request:\n{state.user_request}\n"
+    )
+    answer = _invoke_agent("planner", [HumanMessage(content=prompt)])
+    emit_status("planner", "Research request handled without coding", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Research", "Research response prepared")
+    return {
+        "planner_response": answer,
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "research_answered",
+        "input_intent": "research",
+    }
+
+
+def resume_node(state: GraphState) -> dict:
+    """Resume branch reusing existing todo-based resume logic."""
+    emit_node_start("planner", "Resume", item_desc=state.user_request[:100])
+    resumed = _resume_from_saved_todo(state)
+    if resumed is not None:
+        resumed["input_intent"] = "resume"
+        emit_node_end("planner", "Resume", "Resumed workflow from tasks/todo.md")
+        return resumed
+
+    emit_status("planner", "No resumable TODO list found.", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Resume", "Nothing to resume")
+    return {
+        "planner_response": "No resumable TODO items found in tasks/todo.md.",
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "resume_not_found",
+        "input_intent": "resume",
+    }
+
+
+# ---------------------------------------------------------------------------
 # NODE: planner_plan
 # ---------------------------------------------------------------------------
 
@@ -371,7 +552,9 @@ def planner_plan_node(state: GraphState) -> dict:
     emit_node_start("planner", "Planning", item_desc=state.user_request[:100])
     emit_status("planner", f"Analyzing request: {state.user_request[:80]}...", **_progress_meta(state, "planning"))
 
-    intent = _classify_request_intent(state.user_request)
+    intent = (state.input_intent or "").strip().lower()
+    if intent not in ROUTER_INTENTS and intent not in {"question_only", "resume_workflow", "new_task"}:
+        intent = _classify_request_intent(state.user_request)
     if intent == "question_only":
         answer = _answer_question_directly(state)
         emit_status(
@@ -390,7 +573,7 @@ def planner_plan_node(state: GraphState) -> dict:
             "stop_reason": "question_answered",
         }
 
-    if intent == "resume_workflow":
+    if intent in {"resume_workflow", "resume"}:
         resumed = _resume_from_saved_todo(state)
         if resumed is not None:
             resumed["input_intent"] = intent
@@ -1125,4 +1308,3 @@ def committer_node(state: GraphState) -> dict:
             **_progress_meta(state, "complete"),
         )
         return {"phase": WorkflowPhase.COMPLETE}
-

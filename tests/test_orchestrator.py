@@ -32,6 +32,24 @@ class TestCoderAssignment:
 
 
 class TestRouting:
+    def test_route_after_router_code(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="code", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "code"
+
+    def test_route_after_router_status(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="status", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "status"
+
+    def test_route_after_router_unknown_stops(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="unknown", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "stopped"
+
     def test_route_after_plan_to_coder(self):
         from app.core.orchestrator import _route_after_plan
         state = GraphState(
@@ -115,6 +133,13 @@ class TestGraphBuild:
         from app.core.orchestrator import compile_graph
         compiled = compile_graph()
         assert compiled is not None
+
+    def test_graph_has_router_and_context_nodes(self):
+        from app.core.orchestrator import build_graph
+
+        graph = build_graph()
+        assert "router" in graph.nodes
+        assert "context" in graph.nodes
 
     def test_graph_has_peer_review_node(self):
         from app.core.orchestrator import build_graph
