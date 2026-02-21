@@ -74,3 +74,24 @@ def test_planner_resume_uses_saved_workflow(monkeypatch):
     assert result["phase"] == WorkflowPhase.CODING
     assert result["input_intent"] == "resume_workflow"
     assert result["branch_name"] == "feature/test"
+
+
+def test_resume_node_prefers_checkpoint(monkeypatch):
+    from app.core import nodes
+
+    restored = GraphState(
+        user_request="Implement feature",
+        phase=WorkflowPhase.CODING,
+        current_item_index=0,
+        todo_items=[TodoItem(id="item-001", description="Do thing")],
+        resumed_from_checkpoint=True,
+    )
+
+    monkeypatch.setattr(nodes.checkpoint_manager, "load_checkpoint", lambda repo_root="": restored)
+    state = GraphState(user_request="resume", repo_root="repo")
+
+    result = nodes.resume_node(state)
+
+    assert result["input_intent"] == "resume"
+    assert result["resumed_from_checkpoint"] is True
+    assert result["phase"] == WorkflowPhase.CODING

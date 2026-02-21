@@ -13,6 +13,7 @@ from app.core.nodes import (
     coder_node,
     committer_node,
     context_loader_node,
+    human_gate_node,
     learn_from_review_node,
     peer_review_node,
     planner_decide_node,
@@ -77,6 +78,8 @@ def route_after_router(state: GraphState) -> str:
 def _route_after_resume(state: GraphState) -> str:
     if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_APPROVAL:
+        return "stopped"
     if state.phase == WorkflowPhase.CODING:
         return "coder"
     if state.phase == WorkflowPhase.COMMITTING:
@@ -126,6 +129,14 @@ def _route_after_tester(state: GraphState) -> str:
 def _route_after_decide(state: GraphState) -> str:
     if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
+    return "human_gate"
+
+
+def _route_after_human_gate(state: GraphState) -> str:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
+        return "stopped"
+    if state.needs_human_approval or state.phase == WorkflowPhase.WAITING_FOR_APPROVAL:
+        return "stopped"
     return "commit"
 
 
@@ -153,6 +164,7 @@ def build_graph() -> StateGraph:
     graph.add_node("planner_review", planner_review_node)
     graph.add_node("tester", tester_node)
     graph.add_node("decide", planner_decide_node)
+    graph.add_node("human_gate", human_gate_node)
     graph.add_node("commit", committer_node)
 
     graph.set_entry_point("router")
@@ -184,7 +196,8 @@ def build_graph() -> StateGraph:
         {"tester": "tester", "coder": "coder", "stopped": END},
     )
     graph.add_conditional_edges("tester", _route_after_tester, {"decide": "decide", "coder": "coder", "stopped": END})
-    graph.add_conditional_edges("decide", _route_after_decide, {"commit": "commit", "stopped": END})
+    graph.add_conditional_edges("decide", _route_after_decide, {"human_gate": "human_gate", "stopped": END})
+    graph.add_conditional_edges("human_gate", _route_after_human_gate, {"commit": "commit", "stopped": END})
     graph.add_conditional_edges("commit", _route_after_commit, {"coder": "coder", "complete": END})
 
     return graph

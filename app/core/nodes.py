@@ -17,6 +17,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.agents.models import get_llm, load_system_prompt
+from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import (
     emit_agent_result,
@@ -52,6 +53,7 @@ from app.core.task_routing import (
 from app.tools.build import run_linter, run_tests
 from app.tools.filesystem import list_directory, read_file, write_file
 from app.tools.git import git_command, git_commit_and_push, git_create_branch, git_status
+from app.tools.search import search_in_repo
 from app.tools.terminal import run_terminal
 
 logger = get_logger("core.nodes")
@@ -120,15 +122,25 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
 # -- Tool sets -------------------------------------------------------------
 
-PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_terminal]
+PLANNER_TOOLS = [read_file, write_file, list_directory, search_in_repo, git_status, run_terminal]
 
 CODER_TOOLS = [
     read_file, write_file, list_directory,
+    search_in_repo,
     run_terminal, git_status, git_command,
     run_tests, run_linter,
 ]
 
-REVIEWER_TOOLS = [read_file, list_directory, run_terminal, git_status, git_command, run_tests, run_linter]
+REVIEWER_TOOLS = [
+    read_file,
+    list_directory,
+    search_in_repo,
+    run_terminal,
+    git_status,
+    git_command,
+    run_tests,
+    run_linter,
+]
 
 TESTER_TOOLS = [read_file, list_directory, run_terminal, run_tests, run_linter, git_status]
 DOCUMENTER_TOOLS = [read_file, write_file, list_directory, run_terminal, git_status, git_command]
@@ -198,6 +210,16 @@ def _write_todo_file(items: list[TodoItem], user_request: str) -> None:
             lines.append(f"  - Verify: `{cmd}`")
         lines.append("")
     write_file.invoke({"path": "tasks/todo.md", "content": "\n".join(lines).strip() + "\n"})
+
+
+def _save_checkpoint_snapshot(state: GraphState, updates: dict, checkpoint_type: str) -> None:
+    """Persist a checkpoint based on current state plus node updates."""
+    try:
+        merged = {**state.model_dump(), **updates}
+        snapshot = GraphState(**merged)
+        checkpoint_manager.save_checkpoint(snapshot, checkpoint_type, repo_root=snapshot.repo_root)
+    except Exception as exc:
+        logger.warning("Checkpoint save failed (%s): %s", checkpoint_type, exc)
 
 
 def _classify_request_intent(user_request: str) -> str:
@@ -687,6 +709,85 @@ def _format_context_summary(repo_facts: dict) -> str:
     return ", ".join(lines) if lines else "context loaded"
 
 
+def _extract_test_command(repo_facts: dict) -> str | None:
+    test_framework = repo_facts.get("test_framework")
+    if isinstance(test_framework, dict):
+        cmd = test_framework.get("unit_test_command")
+        if isinstance(cmd, str) and cmd.strip():
+            return cmd.strip()
+    cmd = repo_facts.get("test_command")
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd.strip()
+    return None
+
+
+def _format_repo_context_for_prompt(repo_facts: dict) -> str:
+    """Format structured context so planner/coder can follow repo conventions."""
+    if not repo_facts:
+        return "=== REPOSITORY CONTEXT ===\nNo repository facts detected."
+
+    lines = ["=== REPOSITORY CONTEXT ===", "You MUST follow these detected conventions.", ""]
+
+    tech_stack = repo_facts.get("tech_stack")
+    if isinstance(tech_stack, dict):
+        lines.append(f"Language: {tech_stack.get('language', 'unknown')}")
+        framework = tech_stack.get("framework")
+        if framework:
+            version = tech_stack.get("framework_version")
+            lines.append(f"Framework: {framework}{f' {version}' if version else ''}")
+        manager = tech_stack.get("package_manager")
+        if manager:
+            lines.append(f"Package Manager: {manager}")
+    elif repo_facts.get("language"):
+        lines.append(f"Language: {repo_facts.get('language', 'unknown')}")
+
+    test_framework = repo_facts.get("test_framework")
+    test_command = _extract_test_command(repo_facts)
+    if isinstance(test_framework, dict):
+        lines.append("")
+        lines.append(f"Test Framework: {test_framework.get('name', 'unknown')}")
+    elif isinstance(test_framework, str):
+        lines.append("")
+        lines.append(f"Test Framework: {test_framework}")
+    if test_command:
+        lines.append(f"Test Command: {test_command}")
+        lines.append("CRITICAL: Prefer this test command for verification.")
+
+    conventions = repo_facts.get("conventions")
+    if isinstance(conventions, dict):
+        lines.append("")
+        lines.append("Code Style:")
+        if conventions.get("linting_tool"):
+            lines.append(f"- Linting: {conventions['linting_tool']}")
+        if conventions.get("formatting_tool"):
+            lines.append(f"- Formatting: {conventions['formatting_tool']}")
+        if conventions.get("max_line_length"):
+            lines.append(f"- Max line length: {conventions['max_line_length']}")
+        if conventions.get("function_naming"):
+            lines.append(f"- Function naming: {conventions['function_naming']}")
+        if conventions.get("class_naming"):
+            lines.append(f"- Class naming: {conventions['class_naming']}")
+
+    architecture = repo_facts.get("architecture")
+    if isinstance(architecture, dict):
+        lines.append("")
+        lines.append(f"Architecture: {architecture.get('type', 'unknown')}")
+        layers = architecture.get("layers")
+        if isinstance(layers, list) and layers:
+            lines.append(f"Layers: {', '.join(str(layer) for layer in layers)}")
+
+    ci_cd_setup = repo_facts.get("ci_cd_setup")
+    if isinstance(ci_cd_setup, dict) and ci_cd_setup.get("platform"):
+        lines.append("")
+        lines.append(f"CI/CD: {ci_cd_setup['platform']}")
+        lines.append("Be careful with CI/CD changes.")
+    elif repo_facts.get("ci_cd"):
+        lines.append("")
+        lines.append(f"CI/CD: {repo_facts.get('ci_cd')}")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # NODE: status / research / resume (minimal non-coding branches)
 # ---------------------------------------------------------------------------
@@ -727,11 +828,34 @@ def research_node(state: GraphState) -> dict:
 
 
 def resume_node(state: GraphState) -> dict:
-    """Resume branch reusing existing todo-based resume logic."""
+    """Resume branch using checkpoints first, then TODO fallback."""
     emit_node_start("planner", "Resume", item_desc=state.user_request[:100])
+
+    restored = checkpoint_manager.load_checkpoint(repo_root=state.repo_root)
+    if restored is not None:
+        payload = restored.model_dump()
+        payload["input_intent"] = "resume"
+        payload["resumed_from_checkpoint"] = True
+
+        pending = payload.get("pending_approval", {})
+        approved = isinstance(pending, dict) and bool(pending.get("approved"))
+        if payload.get("needs_human_approval") and not approved:
+            payload["phase"] = WorkflowPhase.WAITING_FOR_APPROVAL
+            payload["stop_reason"] = "human_approval_required"
+            emit_node_end("planner", "Resume", "Checkpoint restored; awaiting human approval")
+        elif approved:
+            payload["needs_human_approval"] = False
+            payload["phase"] = WorkflowPhase.COMMITTING
+            payload["stop_reason"] = ""
+            emit_node_end("planner", "Resume", "Checkpoint restored; approval detected, resuming commit")
+        else:
+            emit_node_end("planner", "Resume", "Checkpoint restored")
+        return payload
+
     resumed = _resume_from_saved_todo(state)
     if resumed is not None:
         resumed["input_intent"] = "resume"
+        resumed["resumed_from_checkpoint"] = False
         emit_node_end("planner", "Resume", "Resumed workflow from tasks/todo.md")
         return resumed
 
@@ -830,6 +954,7 @@ def planner_plan_node(state: GraphState) -> dict:
     if state.context_loaded:
         context_parts.append("Repository context has been preloaded.")
     if state.repo_facts:
+        context_parts.append(_format_repo_context_for_prompt(state.repo_facts))
         context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
     if state.context_listing:
         context_parts.append(
@@ -928,8 +1053,7 @@ def planner_plan_node(state: GraphState) -> dict:
     else:
         active_coder, active_reviewer = _assign_coder_pair(0)
 
-    emit_node_end("planner", "Planning", f"Plan ready - starting with item 1 -> {_coder_label(active_coder)}")
-    return {
+    updates = {
         "input_intent": intent,
         "todo_items": items if items else state.todo_items,
         "current_item_index": 0 if items else state.current_item_index,
@@ -939,6 +1063,10 @@ def planner_plan_node(state: GraphState) -> dict:
         "active_coder": active_coder,
         "active_reviewer": active_reviewer,
     }
+    _save_checkpoint_snapshot(state, updates, "plan_complete")
+
+    emit_node_end("planner", "Planning", f"Plan ready - starting with item 1 -> {_coder_label(active_coder)}")
+    return updates
 
 
 def _compress_memory_file(key: str) -> None:
@@ -1089,11 +1217,26 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(f"**Peer Review Feedback (REWORK)**:\n{state.peer_review_notes}")
     if item.test_report:
         prompt_parts.append(f"**Test Report (previous)**:\n{item.test_report}")
+    if state.repo_facts:
+        prompt_parts.append(_format_repo_context_for_prompt(state.repo_facts))
+    if state.agent_instructions:
+        prompt_parts.append(
+            "**Repository Documentation (excerpt)**:\n"
+            + _truncate_context_text(state.agent_instructions, limit=3000)
+        )
+
+    preferred_test_cmd = _extract_test_command(state.repo_facts)
 
     prompt_parts.append(
         "\nImplement this task. Use tools to read the codebase, make changes, "
         "add tests where needed, and update docs. Keep diffs minimal.\n"
-        "Follow the coding style and architecture decisions from shared memory."
+        "Follow the coding style and architecture decisions from shared memory.\n\n"
+        "CRITICAL WORKFLOW:\n"
+        "1. Search for similar code first via `search_in_repo`.\n"
+        "2. Read existing implementations with `read_file` before editing.\n"
+        "3. Prefer minimal edits and keep architecture patterns consistent.\n"
+        "4. Add or update tests with every behavior change.\n"
+        f"5. Verify using preferred command: `{preferred_test_cmd or 'python -m pytest -q'}`."
     )
 
     tools = DOCUMENTER_TOOLS if active == "documenter" else CODER_TOOLS
@@ -1103,11 +1246,13 @@ def coder_node(state: GraphState) -> dict:
     with suppress(Exception):
         _write_todo_file(state.todo_items, state.user_request)
 
-    return {
+    updates = {
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
         "total_iterations": state.total_iterations + 1,
     }
+    _save_checkpoint_snapshot(state, updates, "code_complete")
+    return updates
 
 
 # ---------------------------------------------------------------------------
@@ -1415,10 +1560,13 @@ def tester_node(state: GraphState) -> dict:
 
     emit_node_end("tester", "Testing", f"Verdict: {verdict}")
 
-    return {
+    updates = {
         "last_test_result": result,
         "phase": WorkflowPhase.DECIDING if verdict == "PASS" else WorkflowPhase.CODING,
     }
+    if verdict == "PASS":
+        _save_checkpoint_snapshot(state, updates, "test_pass")
+    return updates
 
 
 # ---------------------------------------------------------------------------
@@ -1458,6 +1606,107 @@ def planner_decide_node(state: GraphState) -> dict:
     }
 
 
+def _count_lines_in_numstat(diff_numstat: str) -> int:
+    total = 0
+    for line in diff_numstat.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("["):
+            continue
+        parts = clean.split("\t")
+        if len(parts) < 3:
+            continue
+        try:
+            added = 0 if parts[0] == "-" else int(parts[0])
+            deleted = 0 if parts[1] == "-" else int(parts[1])
+        except ValueError:
+            continue
+        total += added + deleted
+    return total
+
+
+def _parse_changed_files_from_status(porcelain_status: str) -> tuple[list[str], list[str]]:
+    changed: list[str] = []
+    deleted: list[str] = []
+    for line in porcelain_status.splitlines():
+        clean = line.rstrip()
+        if len(clean) < 4 or clean.startswith("["):
+            continue
+        status = clean[:2]
+        file_path = clean[3:].strip()
+        if not file_path:
+            continue
+        changed.append(file_path)
+        if "D" in status:
+            deleted.append(file_path)
+    return changed, deleted
+
+
+def human_gate_node(state: GraphState) -> dict:
+    """Pause for human approval before commit and risky operations."""
+    emit_node_start("planner", "Human Gate", item_desc=state.user_request[:100])
+    emit_status("planner", "Evaluating whether human approval is required", **_progress_meta(state, "reviewing"))
+
+    pending = state.pending_approval or {}
+    if pending.get("approved"):
+        emit_node_end("planner", "Human Gate", "Approval already granted")
+        return {"needs_human_approval": False, "phase": WorkflowPhase.COMMITTING, "stop_reason": ""}
+
+    if state.needs_human_approval and not pending.get("approved"):
+        emit_node_end("planner", "Human Gate", "Still waiting for human approval")
+        return {"phase": WorkflowPhase.WAITING_FOR_APPROVAL, "stop_reason": "human_approval_required"}
+
+    approval_triggers = [{"type": "commit", "reason": "Commit requires human approval"}]
+
+    status_raw = git_command.invoke({"command": "git status --porcelain"})
+    changed_files, deleted_files = _parse_changed_files_from_status(status_raw)
+    for file_path in deleted_files:
+        approval_triggers.append({"type": "file_deletion", "reason": f"File deletion: {file_path}"})
+
+    ci_markers = (".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/")
+    for file_path in changed_files:
+        if any(marker in file_path for marker in ci_markers):
+            approval_triggers.append({"type": "ci_config_change", "reason": f"CI/CD change: {file_path}"})
+
+    diff_numstat = git_command.invoke({"command": "git diff --numstat"})
+    lines_changed = _count_lines_in_numstat(diff_numstat)
+    if lines_changed > 400:
+        approval_triggers.append({"type": "large_diff", "reason": f"Large diff: {lines_changed} changed lines"})
+
+    diff_preview = git_command.invoke({"command": "git diff"})
+    if len(diff_preview) > 5000:
+        diff_preview = diff_preview[:5000] + "\n\n... (truncated)"
+
+    payload = {
+        "type": "commit",
+        "triggers": approval_triggers,
+        "summary": f"{len(changed_files)} files changed, {lines_changed} changed lines",
+        "files": changed_files,
+        "git_status": status_raw,
+        "diff_preview": diff_preview,
+        "approved": False,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    history = list(state.approval_history)
+    history.append({"timestamp": payload["timestamp"], "approved": None, "triggers": approval_triggers})
+
+    updates = {
+        "needs_human_approval": True,
+        "pending_approval": payload,
+        "approval_history": history,
+        "phase": WorkflowPhase.WAITING_FOR_APPROVAL,
+        "stop_reason": "human_approval_required",
+    }
+    _save_checkpoint_snapshot(state, updates, "await_approval")
+
+    emit_status(
+        "planner",
+        "Human approval required before commit",
+        **_progress_meta(state, "waiting_for_approval"),
+    )
+    emit_node_end("planner", "Human Gate", "Paused for human approval")
+    return updates
+
+
 def _extract_commit_message(peer_notes: str, planner_notes: str, fallback_desc: str) -> str:
     for source in [planner_notes, peer_notes]:
         for line in source.split("\n"):
@@ -1488,6 +1737,7 @@ def committer_node(state: GraphState) -> dict:
     result = git_commit_and_push.invoke({"message": item.commit_message, "push": True})
     emit_commit(item.commit_message, item_id=item.id)
     logger.info("commit result: %s", result[:200])
+    _save_checkpoint_snapshot(state, {"phase": WorkflowPhase.COMMITTING}, "commit_success")
 
     next_index = state.current_item_index + 1
     has_more = next_index < len(state.todo_items)
@@ -1509,6 +1759,9 @@ def committer_node(state: GraphState) -> dict:
             "active_reviewer": next_reviewer,
             "peer_review_notes": "",
             "peer_review_verdict": "",
+            "needs_human_approval": False,
+            "pending_approval": {},
+            "stop_reason": "",
         }
     else:
         # Log final memory stats
@@ -1524,4 +1777,9 @@ def committer_node(state: GraphState) -> dict:
             f"🎉 All {len(state.todo_items)} items completed! Branch: {state.branch_name}",
             **_progress_meta(state, "complete"),
         )
-        return {"phase": WorkflowPhase.COMPLETE}
+        return {
+            "phase": WorkflowPhase.COMPLETE,
+            "needs_human_approval": False,
+            "pending_approval": {},
+            "stop_reason": "",
+        }

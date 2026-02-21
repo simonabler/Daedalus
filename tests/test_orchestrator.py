@@ -117,6 +117,21 @@ class TestRouting:
         state = GraphState(phase=WorkflowPhase.CODING)
         assert _route_after_tester(state) == "coder"
 
+    def test_route_after_decide_goes_to_human_gate(self):
+        from app.core.orchestrator import _route_after_decide
+        state = GraphState(phase=WorkflowPhase.COMMITTING)
+        assert _route_after_decide(state) == "human_gate"
+
+    def test_route_after_human_gate_stops_when_approval_needed(self):
+        from app.core.orchestrator import _route_after_human_gate
+        state = GraphState(phase=WorkflowPhase.WAITING_FOR_APPROVAL, needs_human_approval=True)
+        assert _route_after_human_gate(state) == "stopped"
+
+    def test_route_after_human_gate_to_commit(self):
+        from app.core.orchestrator import _route_after_human_gate
+        state = GraphState(phase=WorkflowPhase.COMMITTING, needs_human_approval=False)
+        assert _route_after_human_gate(state) == "commit"
+
     def test_route_after_commit_more_items(self):
         from app.core.orchestrator import _route_after_commit
         state = GraphState(phase=WorkflowPhase.CODING)
@@ -140,6 +155,7 @@ class TestGraphBuild:
         graph = build_graph()
         assert "router" in graph.nodes
         assert "context" in graph.nodes
+        assert "human_gate" in graph.nodes
 
     def test_graph_has_peer_review_node(self):
         from app.core.orchestrator import build_graph
