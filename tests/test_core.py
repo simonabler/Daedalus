@@ -34,6 +34,13 @@ class TestGraphState:
         assert state.context_loaded is False
         assert state.repo_facts == {}
         assert state.agent_instructions == ""
+        assert state.needs_human_approval is False
+        assert state.pending_approval == {}
+        assert state.approval_history == []
+        assert state.state_checkpoint_id is None
+        assert state.checkpoint_id is None
+        assert state.last_checkpoint_path is None
+        assert state.resumed_from_checkpoint is False
 
     def test_current_item(self):
         from app.core.state import GraphState, TodoItem
@@ -124,3 +131,51 @@ class TestDualCoderGraphState:
     def test_peer_review_phase_exists(self):
         from app.core.state import WorkflowPhase
         assert WorkflowPhase.PEER_REVIEWING == "peer_reviewing"
+
+
+class TestGraphStateSerialization:
+    def test_graphstate_serialization_roundtrip(self):
+        from app.core.state import GraphState
+
+        state = GraphState(
+            user_request="test task",
+            input_intent="code",
+            repo_facts={"language": "python"},
+            needs_human_approval=True,
+            pending_approval={"type": "commit", "approved": False},
+        )
+
+        payload = state.model_dump()
+        assert isinstance(payload, dict)
+        assert payload["user_request"] == "test task"
+        assert payload["repo_facts"]["language"] == "python"
+
+        restored = GraphState.from_dict(payload)
+        assert restored.user_request == state.user_request
+        assert restored.repo_facts == state.repo_facts
+        assert restored.needs_human_approval is True
+        assert restored.pending_approval["type"] == "commit"
+
+    def test_from_dict_accepts_checkpoint_id_alias(self):
+        from app.core.state import GraphState
+
+        restored = GraphState.from_dict({"user_request": "x", "checkpoint_id": "cp-123"})
+        assert restored.state_checkpoint_id == "cp-123"
+        assert restored.checkpoint_id == "cp-123"
+
+    def test_backward_compatibility_defaults(self):
+        from app.core.state import GraphState
+
+        state = GraphState(user_request="test")
+        assert state.agent_instructions == ""
+        assert state.repo_facts == {}
+        assert state.needs_human_approval is False
+        assert state.pending_approval == {}
+
+
+class TestWorkflowPhaseExtensions:
+    def test_new_phase_members_exist(self):
+        from app.core.state import WorkflowPhase
+
+        assert WorkflowPhase.LOADING_CONTEXT == "loading_context"
+        assert WorkflowPhase.WAITING_FOR_APPROVAL == "waiting_for_approval"
