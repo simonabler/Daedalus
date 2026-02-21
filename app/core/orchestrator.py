@@ -59,9 +59,19 @@ def route_after_router(state: GraphState) -> str:
         return "stopped"
 
     intent = (state.input_intent or "").strip().lower()
-    if intent in {"status", "research", "resume", "code"}:
-        return intent
-    return "stopped"
+    logger.info("Routing router intent '%s'", intent or "(empty)")
+
+    if intent == "status":
+        return "status"
+    if intent == "research":
+        return "research"
+    if intent == "resume":
+        return "resume"
+    if intent == "code":
+        return "context"
+
+    logger.warning("Unknown intent '%s' - defaulting to context", intent)
+    return "context"
 
 
 def _route_after_resume(state: GraphState) -> str:
@@ -150,7 +160,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "router",
         route_after_router,
-        {"status": "status", "research": "research", "resume": "resume", "code": "context", "stopped": END},
+        {"status": "status", "research": "research", "resume": "resume", "context": "context", "stopped": END},
     )
     graph.add_edge("context", "planner")
     graph.add_edge("status", END)

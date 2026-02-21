@@ -31,6 +31,9 @@ class TestGraphState:
         assert state.phase == WorkflowPhase.IDLE
         assert state.current_item is None
         assert state.completed_items == 0
+        assert state.context_loaded is False
+        assert state.repo_facts == {}
+        assert state.agent_instructions == ""
 
     def test_current_item(self):
         from app.core.state import GraphState, TodoItem

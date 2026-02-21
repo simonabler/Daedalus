@@ -32,11 +32,11 @@ class TestCoderAssignment:
 
 
 class TestRouting:
-    def test_route_after_router_code(self):
+    def test_route_after_router_code_goes_to_context(self):
         from app.core.orchestrator import route_after_router
 
         state = GraphState(input_intent="code", phase=WorkflowPhase.PLANNING)
-        assert route_after_router(state) == "code"
+        assert route_after_router(state) == "context"
 
     def test_route_after_router_status(self):
         from app.core.orchestrator import route_after_router
@@ -44,11 +44,11 @@ class TestRouting:
         state = GraphState(input_intent="status", phase=WorkflowPhase.PLANNING)
         assert route_after_router(state) == "status"
 
-    def test_route_after_router_unknown_stops(self):
+    def test_route_after_router_unknown_defaults_to_context(self):
         from app.core.orchestrator import route_after_router
 
         state = GraphState(input_intent="unknown", phase=WorkflowPhase.PLANNING)
-        assert route_after_router(state) == "stopped"
+        assert route_after_router(state) == "context"
 
     def test_route_after_plan_to_coder(self):
         from app.core.orchestrator import _route_after_plan

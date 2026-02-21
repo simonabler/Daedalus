@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -63,6 +63,10 @@ class GraphState(BaseModel):
     execution_platform: str = ""
     input_intent: str = ""
     planner_response: str = ""
+    agent_instructions: str = ""
+    repo_facts: dict[str, Any] = Field(default_factory=dict)
+    context_listing: str = ""
+    context_loaded: bool = False
 
     # ── Plan & progress ───────────────────────────────────────────────
     todo_items: list[TodoItem] = Field(default_factory=list)

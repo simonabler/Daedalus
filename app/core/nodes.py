@@ -12,6 +12,7 @@ import platform
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
@@ -478,11 +479,212 @@ def router_node(state: GraphState) -> dict:
 # ---------------------------------------------------------------------------
 
 def context_loader_node(state: GraphState) -> dict:
-    """Prepare context stage before planner (no mutation yet)."""
+    """Load repository context before planner execution."""
     emit_node_start("planner", "Context Loader", item_desc=state.user_request[:100])
-    emit_status("planner", "Context pre-load step ready (placeholder)", **_progress_meta(state, "planning"))
-    emit_node_end("planner", "Context Loader", "Proceeding to planner")
-    return {"input_intent": "code"}
+    if state.context_loaded:
+        emit_status("planner", "Context already loaded; skipping re-analysis", **_progress_meta(state, "planning"))
+        emit_node_end("planner", "Context Loader", "Skipped (already loaded)")
+        return {"input_intent": "code", "context_loaded": True}
+
+    settings = get_settings()
+    repo_root = (state.repo_root or settings.target_repo_path or "").strip()
+    if not repo_root:
+        emit_error("planner", "Context loader could not determine repository path.")
+        emit_node_end("planner", "Context Loader", "Failed (repo path missing)")
+        return {
+            "repo_facts": {"error": "Missing repository path", "fallback": True},
+            "context_loaded": False,
+            "stop_reason": "context_repo_path_missing",
+            "phase": WorkflowPhase.STOPPED,
+        }
+
+    repo_path = Path(repo_root).resolve()
+    if not repo_path.exists() or not repo_path.is_dir():
+        emit_error("planner", f"Context loader repository path invalid: {repo_path}")
+        emit_node_end("planner", "Context Loader", "Failed (repo path invalid)")
+        return {
+            "repo_facts": {"error": f"Invalid repository path: {repo_path}", "fallback": True},
+            "context_loaded": False,
+            "stop_reason": "context_repo_path_invalid",
+            "phase": WorkflowPhase.STOPPED,
+        }
+
+    emit_status("planner", "Reading repository documentation and structure", **_progress_meta(state, "planning"))
+
+    doc_files = [
+        "docs/AGENT.md",
+        "AGENT.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CONTRIBUTING.md",
+        "CONTRIBUTING.rst",
+        "README.md",
+    ]
+
+    max_chars = max(1000, int(settings.max_output_chars))
+    instruction_chunks: list[str] = []
+    for rel_path in doc_files:
+        file_path = repo_path / rel_path
+        if not file_path.exists() or not file_path.is_file():
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            trimmed = _truncate_context_text(content, limit=min(max_chars, 8000))
+            instruction_chunks.append(f"=== {rel_path} ===\n{trimmed}")
+        except Exception as exc:
+            logger.warning("Could not read context file %s: %s", rel_path, exc)
+
+    agent_instructions = "\n\n".join(instruction_chunks).strip()
+    context_listing = _build_context_listing(repo_path, max_depth=2, max_entries=350)
+
+    repo_facts: dict = {}
+    try:
+        from app.agents.analyzer import CodebaseAnalyzer
+
+        analyzer = CodebaseAnalyzer(repo_path)
+        repo_context = analyzer.analyze_repository()
+        repo_facts = repo_context.to_dict()
+    except Exception as exc:
+        logger.warning("Structured repository analysis failed; falling back to heuristics: %s", exc)
+        repo_facts = {"error": str(exc), "fallback": True}
+
+    if repo_facts.get("fallback"):
+        repo_facts = _heuristic_analysis(repo_path)
+
+    summary = _format_context_summary(repo_facts)
+    emit_status(
+        "planner",
+        f"Repository context loaded: {summary}",
+        **_progress_meta(state, "planning"),
+    )
+    emit_node_end("planner", "Context Loader", "Repository context ready for planner")
+
+    return {
+        "input_intent": "code",
+        "agent_instructions": agent_instructions,
+        "repo_facts": repo_facts,
+        "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
+        "context_loaded": True,
+    }
+
+
+def _truncate_context_text(text: str, limit: int = 8000) -> str:
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    tail = limit - head
+    return text[:head] + f"\n\n... [truncated {len(text) - limit} chars] ...\n\n" + text[-tail:]
+
+
+def _build_context_listing(repo_path: Path, max_depth: int = 2, max_entries: int = 300) -> str:
+    """Build a compact repo listing without using mutation-capable tools."""
+    lines: list[str] = []
+    skipped_dirs = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules"}
+
+    def _walk(path: Path, depth: int, prefix: str = "") -> None:
+        if len(lines) >= max_entries or depth > max_depth:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except Exception:
+            return
+        for entry in entries:
+            if len(lines) >= max_entries:
+                return
+            if entry.name in skipped_dirs:
+                continue
+            if entry.name.startswith(".") and entry.name not in {".github", ".agents"}:
+                continue
+            if entry.is_dir():
+                lines.append(f"{prefix}{entry.name}/")
+                _walk(entry, depth + 1, prefix + "  ")
+            else:
+                lines.append(f"{prefix}{entry.name}")
+
+    _walk(repo_path, depth=0)
+    if len(lines) >= max_entries:
+        lines.append("... [listing truncated]")
+    return "\n".join(lines) if lines else "(empty)"
+
+
+def _heuristic_analysis(repo_path: Path) -> dict:
+    """Fallback file-based repository analysis."""
+    facts: dict = {}
+
+    if (repo_path / "pyproject.toml").exists() or (repo_path / "setup.py").exists():
+        facts["language"] = "python"
+        facts["package_manager"] = "poetry" if (repo_path / "poetry.lock").exists() else "pip"
+        if (repo_path / "pytest.ini").exists():
+            facts["test_framework"] = "pytest"
+            facts["test_command"] = "python -m pytest -q"
+        else:
+            facts["test_framework"] = "unittest"
+            facts["test_command"] = "python -m unittest discover"
+    elif (repo_path / "package.json").exists():
+        facts["language"] = "javascript"
+        facts["package_manager"] = "yarn" if (repo_path / "yarn.lock").exists() else "npm"
+        facts["test_command"] = "npm test"
+        try:
+            parsed = json.loads((repo_path / "package.json").read_text(encoding="utf-8"))
+            scripts = parsed.get("scripts", {})
+            if isinstance(scripts, dict):
+                facts["test_command"] = scripts.get("test", "npm test")
+        except Exception:
+            pass
+    else:
+        facts["language"] = "unknown"
+
+    if (repo_path / ".github" / "workflows").exists():
+        facts["ci_cd"] = "github_actions"
+    elif (repo_path / ".gitlab-ci.yml").exists():
+        facts["ci_cd"] = "gitlab_ci"
+
+    facts["has_docker"] = (repo_path / "Dockerfile").exists()
+    return facts
+
+
+def _format_context_summary(repo_facts: dict) -> str:
+    if not repo_facts:
+        return "no facts detected"
+    if repo_facts.get("error"):
+        return f"analysis failed ({repo_facts['error']})"
+
+    lines: list[str] = []
+    tech_stack = repo_facts.get("tech_stack")
+    if isinstance(tech_stack, dict):
+        language = tech_stack.get("language", "unknown")
+        framework = tech_stack.get("framework")
+        lines.append(f"language={language}")
+        if framework:
+            lines.append(f"framework={framework}")
+    elif repo_facts.get("language"):
+        lines.append(f"language={repo_facts['language']}")
+
+    test_framework = repo_facts.get("test_framework")
+    if isinstance(test_framework, dict):
+        if test_framework.get("name"):
+            lines.append(f"tests={test_framework['name']}")
+        if test_framework.get("unit_test_command"):
+            lines.append(f"test_cmd={test_framework['unit_test_command']}")
+    elif isinstance(test_framework, str):
+        lines.append(f"tests={test_framework}")
+    elif repo_facts.get("test_command"):
+        lines.append(f"test_cmd={repo_facts['test_command']}")
+
+    conventions = repo_facts.get("conventions")
+    if isinstance(conventions, dict):
+        if conventions.get("linting_tool"):
+            lines.append(f"lint={conventions['linting_tool']}")
+        if conventions.get("formatting_tool"):
+            lines.append(f"fmt={conventions['formatting_tool']}")
+
+    ci_cd_setup = repo_facts.get("ci_cd_setup")
+    if isinstance(ci_cd_setup, dict) and ci_cd_setup.get("platform"):
+        lines.append(f"ci={ci_cd_setup['platform']}")
+    elif repo_facts.get("ci_cd"):
+        lines.append(f"ci={repo_facts['ci_cd']}")
+
+    return ", ".join(lines) if lines else "context loaded"
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +826,21 @@ def planner_plan_node(state: GraphState) -> dict:
         "Routing history:",
         history_summary(state.repo_root),
     ]
+
+    if state.context_loaded:
+        context_parts.append("Repository context has been preloaded.")
+    if state.repo_facts:
+        context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
+    if state.context_listing:
+        context_parts.append(
+            "Repository listing (depth<=2):\n"
+            + _truncate_context_text(state.context_listing, limit=4000)
+        )
+    if state.agent_instructions:
+        context_parts.append(
+            "Repository instructions (AGENT/README snippets):\n"
+            + _truncate_context_text(state.agent_instructions, limit=5000)
+        )
 
     memory_ctx = load_all_memory()
     if memory_ctx:
