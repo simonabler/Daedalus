@@ -472,14 +472,19 @@ def router_node(state: GraphState) -> dict:
         emit_node_end("planner", "Router", f"Heuristic intent: {heuristic_intent}")
         return {"input_intent": heuristic_intent}
 
-    router_prompt = (
-        "Classify the user request into ONE intent only.\n"
-        "Allowed intents: code, status, research, resume.\n"
-        "Return STRICT JSON only, no markdown:\n"
-        '{"intent":"code|status|research|resume","confidence":0.0}\n\n'
-        f"User request:\n{state.user_request}\n"
-    )
-    llm_result = _invoke_agent("planner", [HumanMessage(content=router_prompt)])
+    _router_prompt_file = Path(__file__).parent.parent / "agents" / "prompts" / "router.txt"
+    if _router_prompt_file.exists():
+        _router_system = _router_prompt_file.read_text(encoding="utf-8")
+    else:
+        _router_system = (
+            "Classify the user request into ONE intent only.\n"
+            "Allowed intents: code, status, research, resume.\n"
+            "Return STRICT JSON only, no markdown:\n"
+            '{"intent":"code|status|research|resume","confidence":0.0}\n'
+        )
+    llm_result = get_llm("planner").invoke(
+        [SystemMessage(content=_router_system), HumanMessage(content=f"User request:\n{state.user_request}")]
+    ).content
     llm_intent, confidence = _parse_router_json(llm_result)
 
     if llm_intent:
@@ -533,6 +538,13 @@ def context_loader_node(state: GraphState) -> dict:
 
     emit_status("planner", "Reading repository documentation and structure", **_progress_meta(state, "planning"))
 
+    # Daedalus' own root directory — determined once at import time.
+    # AGENT.md files are ONLY read from the target repo, never from Daedalus itself.
+    # This prevents Daedalus' own build-spec (AGENT.md) from leaking into tasks
+    # targeting unrelated repositories.
+    _daedalus_root = Path(__file__).parent.parent.parent.resolve()
+    _is_self_referential = repo_path.resolve() == _daedalus_root
+
     doc_files = [
         "docs/AGENT.md",
         "AGENT.md",
@@ -543,15 +555,27 @@ def context_loader_node(state: GraphState) -> dict:
         "README.md",
     ]
 
+    # AGENT.md files are intentionally excluded when the target repo IS Daedalus itself.
+    # When working on Daedalus, TARGET_REPO_PATH must point to a separate clone/copy —
+    # in that case the copy's own AGENT.md will be read normally.
+    _agent_md_files = {"docs/AGENT.md", "AGENT.md", "AGENTS.md"}
+
     max_chars = max(1000, int(settings.max_output_chars))
     instruction_chunks: list[str] = []
     for rel_path in doc_files:
+        if _is_self_referential and rel_path in _agent_md_files:
+            logger.info(
+                "Context loader: skipping %s — target repo is Daedalus root. "
+                "Set TARGET_REPO_PATH to a separate clone to enable self-improvement mode.",
+                rel_path,
+            )
+            continue
         file_path = repo_path / rel_path
         if not file_path.exists() or not file_path.is_file():
             continue
         try:
-            content = file_path.read_text(encoding="utf-8", errors="replace")
-            trimmed = _truncate_context_text(content, limit=min(max_chars, 8000))
+            file_content = file_path.read_text(encoding="utf-8", errors="replace")
+            trimmed = _truncate_context_text(file_content, limit=min(max_chars, 8000))
             instruction_chunks.append(f"=== {rel_path} ===\n{trimmed}")
         except Exception as exc:
             logger.warning("Could not read context file %s: %s", rel_path, exc)
