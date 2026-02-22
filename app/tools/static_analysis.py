@@ -70,6 +70,8 @@ def run_static_analysis(repo_path: str | Path, language: str) -> list[StaticIssu
         issues.extend(_run_mypy(root))
     elif lang in {"javascript", "typescript"}:
         issues.extend(_run_eslint(root))
+        if lang == "typescript":
+            issues.extend(_run_tsc(root))
     else:
         logger.debug("static_analysis: unsupported language '%s', skipping", lang)
 
@@ -354,9 +356,137 @@ def _find_eslint(root: Path) -> str | None:
     local = root / "node_modules" / ".bin" / "eslint"
     if local.exists():
         return str(local)
-    # Try system PATH
     import shutil
     return shutil.which("eslint")
+
+
+# ---------------------------------------------------------------------------
+# tsc (TypeScript compiler — type checking only)
+# ---------------------------------------------------------------------------
+
+def _run_tsc(root: Path) -> list[StaticIssue]:
+    """Run ``tsc --noEmit`` and parse its diagnostic output.
+
+    Only runs when a ``tsconfig.json`` is present in *root*.  Requires
+    ``typescript`` to be installed as a local dev dependency or globally.
+    """
+    tsconfig = root / "tsconfig.json"
+    if not tsconfig.exists():
+        logger.debug("tsc: no tsconfig.json found, skipping")
+        return []
+
+    tsc_bin = _find_tsc(root)
+    if not tsc_bin:
+        logger.debug("tsc: binary not found, skipping")
+        return []
+
+    try:
+        proc = subprocess.run(
+            [tsc_bin, "--noEmit", "--pretty", "false"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=_TOOL_TIMEOUT,
+        )
+    except FileNotFoundError:
+        logger.debug("tsc binary not executable: %s", tsc_bin)
+        return []
+    except subprocess.TimeoutExpired:
+        logger.warning("tsc timed out after %ds", _TOOL_TIMEOUT)
+        return []
+    except Exception as exc:
+        logger.warning("tsc failed unexpectedly: %s", exc)
+        return []
+
+    issues: list[StaticIssue] = []
+    for line in (proc.stdout + proc.stderr).splitlines():
+        parsed = _parse_tsc_line(root, line)
+        if parsed:
+            issues.append(parsed)
+
+    logger.info("tsc: %d issues found", len(issues))
+    return issues
+
+
+def _parse_tsc_line(root: Path, line: str) -> StaticIssue | None:
+    """Parse a single tsc diagnostic line.
+
+    Format: ``path/to/file.ts(10,5): error TS2345: message``
+    """
+    # Must contain the TS error pattern
+    if "): error TS" not in line and "): warning TS" not in line:
+        return None
+
+    # Split on the first "): "
+    paren_idx = line.find("): ")
+    if paren_idx == -1:
+        return None
+
+    location_part = line[:paren_idx]   # "path/to/file.ts(10,5"
+    rest = line[paren_idx + 3:]        # "error TS2345: Argument of type..."
+
+    # Extract file and line/col from location_part
+    paren_open = location_part.rfind("(")
+    if paren_open == -1:
+        return None
+
+    file_part = location_part[:paren_open]
+    coords = location_part[paren_open + 1:]  # "10,5"
+    line_no = 0
+    col_no = 0
+    if "," in coords:
+        parts = coords.split(",", 1)
+        try:
+            line_no = int(parts[0])
+            col_no = int(parts[1])
+        except ValueError:
+            pass
+    else:
+        try:
+            line_no = int(coords)
+        except ValueError:
+            pass
+
+    # Parse "error TS2345: message"
+    severity: Severity = "error"
+    rule_id = ""
+    message = rest
+
+    if rest.startswith("error "):
+        severity = "error"
+        rest_body = rest[len("error "):]
+    elif rest.startswith("warning "):
+        severity = "warning"
+        rest_body = rest[len("warning "):]
+    else:
+        rest_body = rest
+
+    # Extract TS error code
+    if rest_body.startswith("TS") and ": " in rest_body:
+        code_end = rest_body.index(": ")
+        rule_id = rest_body[:code_end]
+        message = rest_body[code_end + 2:]
+    else:
+        message = rest_body
+
+    return StaticIssue(
+        file=_rel(root, file_part.strip()),
+        line=line_no,
+        col=col_no,
+        severity=severity,
+        rule_id=rule_id,
+        message=message.strip(),
+        tool="tsc",
+    )
+
+
+def _find_tsc(root: Path) -> str | None:
+    """Locate the tsc binary: local node_modules first, then PATH."""
+    local = root / "node_modules" / ".bin" / "tsc"
+    if local.exists():
+        return str(local)
+    import shutil
+    return shutil.which("tsc")
 
 
 # ---------------------------------------------------------------------------

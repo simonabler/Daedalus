@@ -15,6 +15,7 @@ from app.tools.static_analysis import (
     StaticIssue,
     _find_eslint,
     _parse_mypy_line,
+    _parse_tsc_line,
     _rel,
     _ruff_severity,
     _sort_issues,
@@ -331,7 +332,112 @@ class TestRunStaticAnalysisUnsupported:
 
 
 # ---------------------------------------------------------------------------
-# GraphState integration
+# _parse_tsc_line
+# ---------------------------------------------------------------------------
+
+class TestParseTscLine:
+    def test_parses_error_line(self, tmp_path):
+        line = "src/index.ts(10,5): error TS2345: Argument of type 'string' is not assignable."
+        issue = _parse_tsc_line(tmp_path, line)
+        assert issue is not None
+        assert issue.line == 10
+        assert issue.col == 5
+        assert issue.severity == "error"
+        assert issue.rule_id == "TS2345"
+        assert "Argument of type" in issue.message
+        assert issue.tool == "tsc"
+
+    def test_parses_warning_line(self, tmp_path):
+        line = "src/utils.ts(3,1): warning TS6133: 'foo' is declared but its value is never read."
+        issue = _parse_tsc_line(tmp_path, line)
+        assert issue is not None
+        assert issue.severity == "warning"
+        assert issue.rule_id == "TS6133"
+
+    def test_garbage_returns_none(self, tmp_path):
+        assert _parse_tsc_line(tmp_path, "not a tsc line") is None
+        assert _parse_tsc_line(tmp_path, "") is None
+        assert _parse_tsc_line(tmp_path, "Found 3 errors.") is None
+
+    def test_no_col_is_ok(self, tmp_path):
+        line = "src/index.ts(7): error TS2304: Cannot find name 'foo'."
+        issue = _parse_tsc_line(tmp_path, line)
+        assert issue is not None
+        assert issue.line == 7
+        assert issue.col == 0
+
+
+# ---------------------------------------------------------------------------
+# run_static_analysis — tsc integration (mocked)
+# ---------------------------------------------------------------------------
+
+TSC_OUTPUT = """\
+src/index.ts(5,3): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+src/utils.ts(12,1): error TS2304: Cannot find name 'axios'.
+Found 2 errors.
+"""
+
+
+class TestRunStaticAnalysisTsc:
+    def test_tsc_issues_parsed(self, tmp_path):
+        (tmp_path / "tsconfig.json").write_text('{"compilerOptions": {}}')
+        mock_proc = MagicMock()
+        mock_proc.stdout = TSC_OUTPUT
+        mock_proc.stderr = ""
+
+        with patch("app.tools.static_analysis.subprocess.run", return_value=mock_proc), \
+             patch("app.tools.static_analysis._find_tsc", return_value="/usr/bin/tsc"), \
+             patch("app.tools.static_analysis._find_eslint", return_value=None):
+            issues = run_static_analysis(tmp_path, "typescript")
+
+        tsc_issues = [i for i in issues if i.tool == "tsc"]
+        assert len(tsc_issues) == 2
+        # sorted by file then line: src/index.ts(5) before src/utils.ts(12)
+        assert tsc_issues[0].rule_id == "TS2345"
+        assert tsc_issues[1].rule_id == "TS2304"
+        assert all(i.severity == "error" for i in tsc_issues)
+
+    def test_tsc_skipped_when_no_tsconfig(self, tmp_path):
+        # No tsconfig.json → tsc should not run
+        with patch("app.tools.static_analysis._find_tsc", return_value="/usr/bin/tsc"), \
+             patch("app.tools.static_analysis._find_eslint", return_value=None), \
+             patch("app.tools.static_analysis.subprocess.run") as mock_run:
+            run_static_analysis(tmp_path, "typescript")
+
+        # subprocess.run should NOT have been called for tsc
+        for call in mock_run.call_args_list:
+            cmd = call[0][0] if call[0] else call[1].get("args", [])
+            assert "tsc" not in str(cmd)
+
+    def test_tsc_not_found_returns_empty(self, tmp_path):
+        (tmp_path / "tsconfig.json").write_text("{}")
+        with patch("app.tools.static_analysis._find_tsc", return_value=None), \
+             patch("app.tools.static_analysis._find_eslint", return_value=None):
+            issues = run_static_analysis(tmp_path, "typescript")
+        tsc_issues = [i for i in issues if i.tool == "tsc"]
+        assert tsc_issues == []
+
+    def test_tsc_timeout_returns_empty(self, tmp_path):
+        import subprocess as sp
+        (tmp_path / "tsconfig.json").write_text("{}")
+        with patch("app.tools.static_analysis._find_tsc", return_value="/usr/bin/tsc"), \
+             patch("app.tools.static_analysis._find_eslint", return_value=None), \
+             patch("app.tools.static_analysis.subprocess.run",
+                   side_effect=sp.TimeoutExpired(cmd="tsc", timeout=60)):
+            issues = run_static_analysis(tmp_path, "typescript")
+        assert isinstance(issues, list)
+
+    def test_javascript_does_not_run_tsc(self, tmp_path):
+        (tmp_path / "tsconfig.json").write_text("{}")
+        with patch("app.tools.static_analysis._find_eslint", return_value=None), \
+             patch("app.tools.static_analysis.subprocess.run") as mock_run:
+            run_static_analysis(tmp_path, "javascript")
+
+        for call in mock_run.call_args_list:
+            cmd = call[0][0] if call[0] else call[1].get("args", [])
+            assert "tsc" not in str(cmd)
+
+
 # ---------------------------------------------------------------------------
 
 class TestGraphStateStaticIssues:
