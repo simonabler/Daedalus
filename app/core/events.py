@@ -18,6 +18,8 @@ Event categories:
   error            — something went wrong
   approval_needed  — human gate fired; UI must show approve/reject panel
   approval_done    — human submitted an approve or reject decision
+  coder_question   — coder paused mid-item to ask the human a question
+  coder_answer     — human submitted an answer to the coder's question
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ class EventCategory(str, Enum):
     ERROR = "error"
     APPROVAL_NEEDED = "approval_needed"
     APPROVAL_DONE = "approval_done"
+    CODER_QUESTION = "coder_question"
+    CODER_ANSWER = "coder_answer"
 
 
 @dataclass
@@ -279,4 +283,46 @@ def emit_approval_done(approved: bool, pending_type: str = "commit") -> None:
         agent="system",
         title=f"{icon} Human {action} the {pending_type}",
         metadata={"approved": approved, "pending_type": pending_type},
+    ))
+
+
+def emit_coder_question(
+    asked_by: str,
+    question: str,
+    context: str = "",
+    options: list | None = None,
+    item_id: str = "",
+) -> None:
+    """Emit when a coder agent pauses mid-item to ask the human a critical question.
+
+    Args:
+        asked_by:  The coder role (``"coder_a"`` or ``"coder_b"``).
+        question:  The question text the human must answer.
+        context:   Why the coder is asking (architectural context, trade-offs, etc.).
+        options:   Suggested answer choices (may be empty for open-ended questions).
+        item_id:   The current work item ID for traceability.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.CODER_QUESTION,
+        agent=asked_by,
+        title=f"🤔 {asked_by} is asking a question",
+        detail=question,
+        metadata={
+            "question": question,
+            "context": context,
+            "options": options or [],
+            "asked_by": asked_by,
+            "item_id": item_id,
+        },
+    ))
+
+
+def emit_coder_answer(asked_by: str, answer: str, item_id: str = "") -> None:
+    """Emit when the human submits an answer to the coder's question."""
+    emit(WorkflowEvent(
+        category=EventCategory.CODER_ANSWER,
+        agent="system",
+        title="💬 Human answered the coder's question",
+        detail=answer,
+        metadata={"asked_by": asked_by, "answer": answer, "item_id": item_id},
     ))

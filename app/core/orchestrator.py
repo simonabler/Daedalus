@@ -10,6 +10,7 @@ from langgraph.graph import END, StateGraph
 
 from app.core.logging import get_logger
 from app.core.nodes import (
+    answer_gate_node,
     coder_node,
     committer_node,
     context_loader_node,
@@ -80,6 +81,8 @@ def _route_after_resume(state: GraphState) -> str:
         return "stopped"
     if state.phase == WorkflowPhase.WAITING_FOR_APPROVAL:
         return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
+        return "answer_gate"
     if state.phase == WorkflowPhase.CODING:
         return "coder"
     if state.phase == WorkflowPhase.COMMITTING:
@@ -90,7 +93,17 @@ def _route_after_resume(state: GraphState) -> str:
 def _route_after_coder(state: GraphState) -> str:
     if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
+        return "answer_gate"
     return "peer_review"
+
+
+def _route_after_answer_gate(state: GraphState) -> str:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
+        return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
+        return "stopped"   # halt until /api/answer is called
+    return "coder"         # answer received — coder continues
 
 
 def _route_after_peer_review(state: GraphState) -> str:
@@ -159,6 +172,7 @@ def build_graph() -> StateGraph:
     graph.add_node("resume", resume_node)
     graph.add_node("planner", planner_plan_node)
     graph.add_node("coder", coder_node)
+    graph.add_node("answer_gate", answer_gate_node)
     graph.add_node("peer_review", peer_review_node)
     graph.add_node("learn", learn_from_review_node)
     graph.add_node("planner_review", planner_review_node)
@@ -180,10 +194,19 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "resume",
         _route_after_resume,
-        {"coder": "coder", "commit": "commit", "complete": END, "stopped": END},
+        {"coder": "coder", "answer_gate": "answer_gate", "commit": "commit", "complete": END, "stopped": END},
     )
     graph.add_conditional_edges("planner", _route_after_plan, {"coder": "coder", "stopped": END})
-    graph.add_conditional_edges("coder", _route_after_coder, {"peer_review": "peer_review", "stopped": END})
+    graph.add_conditional_edges(
+        "coder",
+        _route_after_coder,
+        {"answer_gate": "answer_gate", "peer_review": "peer_review", "stopped": END},
+    )
+    graph.add_conditional_edges(
+        "answer_gate",
+        _route_after_answer_gate,
+        {"coder": "coder", "stopped": END},
+    )
     graph.add_conditional_edges("peer_review", _route_after_peer_review, {"learn": "learn", "stopped": END})
     graph.add_conditional_edges(
         "learn",

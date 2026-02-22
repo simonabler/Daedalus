@@ -233,6 +233,68 @@
   .btn-approve:disabled, .btn-reject:disabled {
     opacity: 0.4; cursor: default; transform: none;
   }
+
+  /* ── Coder Question Panel ────────────────── */
+  .question-panel {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--purple); background: #130e1e;
+    animation: slide-in 0.25s ease;
+  }
+  .question-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #1a1228; border-bottom: 1px solid #2a1a40;
+  }
+  .question-header .q-icon { font-size: 18px; }
+  .question-header .q-title {
+    flex: 1; font-size: 13px; font-weight: 700; color: var(--purple); letter-spacing: 0.5px;
+  }
+  .question-header .q-agent {
+    font-size: 10px; padding: 2px 8px; border-radius: 8px;
+    background: #2a1a40; color: #c084fc; font-weight: 700; text-transform: uppercase;
+  }
+  .question-body { padding: 14px 16px; border-bottom: 1px solid #2a1a40; }
+  .question-text {
+    font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 0;
+  }
+  .question-context {
+    margin-top: 8px; font-size: 11px; color: var(--text-dim); line-height: 1.5;
+    padding: 8px 12px; background: var(--surface2); border-radius: 4px;
+    border-left: 2px solid var(--purple);
+  }
+  .question-options {
+    padding: 10px 16px; display: flex; flex-direction: column; gap: 6px;
+    border-bottom: 1px solid #2a1a40;
+  }
+  .question-options .opt-label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;
+  }
+  .btn-option {
+    padding: 8px 14px; background: #1e1430; border: 1px solid #3a1a55;
+    border-radius: 5px; color: #c084fc; font-family: var(--font); font-size: 11.5px;
+    text-align: left; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-option:hover { background: #2a1a45; border-color: var(--purple); }
+  .question-freetext {
+    padding: 10px 16px; display: flex; gap: 8px;
+  }
+  .question-freetext .ft-label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 4px;
+  }
+  .question-freetext-inner { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .question-freetext input {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface2); color: var(--text); font-family: var(--font);
+    font-size: 12px; outline: none;
+  }
+  .question-freetext input:focus { border-color: var(--purple); }
+  .btn-answer {
+    align-self: flex-end; padding: 8px 20px; background: var(--purple);
+    color: #fff; border: none; border-radius: 5px; font-family: var(--font);
+    font-size: 12px; font-weight: 700; cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-answer:hover { opacity: 0.85; }
+  .btn-answer:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -497,6 +559,104 @@ async function submitApproval(approved, panel) {
   }
 }
 
+// ── Coder Question Panel ─────────────────────
+let _questionPanel = null;
+
+function showQuestionPanel(meta) {
+  currentDetailBlock = null;
+  if (_questionPanel) _questionPanel.remove();
+
+  const panel = document.createElement('div');
+  panel.className = 'question-panel';
+
+  const agentLabel = meta.asked_by === 'coder_a' ? 'CODER A · Claude' : 'CODER B · GPT';
+
+  const contextHtml = meta.context
+    ? `<div class="question-context">${esc(meta.context)}</div>` : '';
+
+  const options = meta.options || [];
+  const optionsHtml = options.length
+    ? `<div class="question-options">
+        <div class="opt-label">Quick answers</div>
+        ${options.map((o, i) => `<button class="btn-option" data-idx="${i}">${esc(o)}</button>`).join('')}
+      </div>` : '';
+
+  panel.innerHTML = `
+    <div class="question-header">
+      <span class="q-icon">🤔</span>
+      <span class="q-title">CODER IS ASKING</span>
+      <span class="q-agent">${esc(agentLabel)}</span>
+    </div>
+    <div class="question-body">
+      <div class="question-text">${esc(meta.question)}</div>
+      ${contextHtml}
+    </div>
+    ${optionsHtml}
+    <div class="question-freetext">
+      <div class="question-freetext-inner">
+        <div class="ft-label">Custom answer</div>
+        <input type="text" id="answerInput" placeholder="Type your answer…" autocomplete="off" />
+        <button class="btn-answer" id="btnAnswer">SEND</button>
+      </div>
+    </div>`;
+
+  chat.appendChild(panel);
+  _questionPanel = panel;
+  scrollBottom();
+
+  // Option buttons
+  panel.querySelectorAll('.btn-option').forEach(btn => {
+    btn.addEventListener('click', () => submitAnswer(btn.textContent.trim(), panel));
+  });
+
+  // Free-text send
+  panel.querySelector('#btnAnswer').addEventListener('click', () => {
+    const val = panel.querySelector('#answerInput').value.trim();
+    if (val) submitAnswer(val, panel);
+  });
+  panel.querySelector('#answerInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const val = panel.querySelector('#answerInput').value.trim();
+      if (val) submitAnswer(val, panel);
+    }
+  });
+}
+
+async function submitAnswer(answer, panel) {
+  const btn = panel.querySelector('#btnAnswer');
+  const input = panel.querySelector('#answerInput');
+  if (btn) btn.disabled = true;
+  if (input) input.disabled = true;
+  panel.querySelectorAll('.btn-option').forEach(b => b.disabled = true);
+
+  try {
+    const res = await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      addStatus(`❌ Answer error: ${data.error}`, 'status-error');
+      if (btn) btn.disabled = false;
+      if (input) input.disabled = false;
+      panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
+      return;
+    }
+    const confirmEl = document.createElement('div');
+    confirmEl.className = 'msg msg-status status-verdict-approve';
+    confirmEl.textContent = `💬 Answer sent: "${answer}" — coder will continue.`;
+    panel.replaceWith(confirmEl);
+    _questionPanel = null;
+    scrollBottom();
+  } catch (err) {
+    addStatus(`❌ Network error: ${err}`, 'status-error');
+    if (btn) btn.disabled = false;
+    if (input) input.disabled = false;
+    panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
+  }
+}
+
 // ── Handle incoming events ───────────────
 function handleEvent(evt) {
   const { category, agent, title, detail, metadata } = evt;
@@ -559,6 +719,23 @@ function handleEvent(evt) {
           : '❌ Rejected — workflow stopped.';
         _approvalPanel.replaceWith(confirmEl);
         _approvalPanel = null;
+        scrollBottom();
+      }
+      break;
+
+    case 'coder_question':
+      showQuestionPanel(metadata || {});
+      break;
+
+    case 'coder_answer':
+      // Panel replaced by submitAnswer(); handle reconnect case
+      if (_questionPanel) {
+        const answerText = metadata?.answer || '';
+        const confirmEl = document.createElement('div');
+        confirmEl.className = 'msg msg-status status-verdict-approve';
+        confirmEl.textContent = `💬 Answer sent: "${answerText}" — coder will continue.`;
+        _questionPanel.replaceWith(confirmEl);
+        _questionPanel = null;
         scrollBottom();
       }
       break;
@@ -651,13 +828,17 @@ function sendTask() {
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
 connectWS();
 
-// On page load, check if a task is already waiting for approval
+// On page load, check if a task is already waiting for approval or a coder answer
 fetch('/api/status').then(r => r.json()).then(data => {
   updateHeader(data);
   if (data.phase === 'waiting_for_approval' && !_approvalPanel) {
-    // Fetch full pending approval details and show the panel
     fetch('/api/pending').then(r => r.json()).then(p => {
       if (p && p.needs_human_approval) showApprovalPanel(p.pending_approval || {});
+    }).catch(() => {});
+  }
+  if (data.phase === 'waiting_for_answer' && !_questionPanel) {
+    fetch('/api/question').then(r => r.json()).then(q => {
+      if (q && q.needs_coder_answer) showQuestionPanel(q.coder_question || {});
     }).catch(() => {});
   }
 }).catch(() => {});

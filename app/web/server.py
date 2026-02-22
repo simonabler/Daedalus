@@ -54,6 +54,10 @@ class ApprovalRequest(BaseModel):
     approved: bool = True
 
 
+class AnswerRequest(BaseModel):
+    answer: str
+
+
 # ── WebSocket broadcast (wired to event bus) ─────────────────────────────
 
 async def _broadcast_event(event: WorkflowEvent) -> None:
@@ -120,6 +124,11 @@ async def _process_tasks():
             if final_state.needs_human_approval:
                 _register_pending_approval(final_state, repo)
 
+            # If the workflow halted waiting for a coder answer, register the
+            # question in the shared registry so Telegram can answer it too.
+            if final_state.needs_coder_answer:
+                _register_pending_question(final_state, repo)
+
             await _broadcast_raw("status", {
                 "phase": final_state.phase.value,
                 "completed": final_state.completed_items,
@@ -180,6 +189,56 @@ def _register_pending_approval(state: GraphState, repo_root: str) -> None:
 
     approval_registry.set_pending(state.pending_approval or {}, _resume)
     logger.info("Pending approval registered in shared registry")
+
+
+def _register_pending_question(state: GraphState, repo_root: str) -> None:
+    """Register the coder's question in the shared registry.
+
+    The answer callback populates ``coder_question_answer`` on the current state
+    and queues a resume task so the coder continues with the answer in context.
+    """
+    def _deliver_answer(answer: str) -> None:
+        global _current_state
+        if _current_state is None:
+            return
+        from app.core.events import emit_coder_answer
+        _current_state.coder_question_answer = answer
+        _current_state.needs_coder_answer = False
+        _current_state.phase = WorkflowPhase.WAITING_FOR_ANSWER  # answer_gate will clear
+        emit_coder_answer(
+            asked_by=_current_state.coder_question_asked_by,
+            answer=answer,
+            item_id=(_current_state.current_item.id if _current_state.current_item else ""),
+        )
+        import asyncio
+        if _task_queue is not None:
+            try:
+                loop = asyncio.get_event_loop()
+                loop.call_soon_threadsafe(
+                    _task_queue.put_nowait,
+                    TaskRequest(task="resume", repo_path=repo_root),
+                )
+            except Exception as exc:
+                logger.error("Failed to queue resume after answer: %s", exc)
+
+    # Re-use the registry's set_pending with a string-typed callback wrapper.
+    # We store the question payload as the "pending" dict and the deliver
+    # callback as a lambda that accepts a bool — we encode the answer string
+    # via a closure so the registry's bool API still works for approval, while
+    # here we store the raw answer string on state before calling the callback.
+    #
+    # To keep the registry generic we store the answer delivery as a separate
+    # attribute on the registry instance.
+    approval_registry.set_answer_pending(
+        question={
+            "question": state.coder_question,
+            "context": state.coder_question_context,
+            "options": state.coder_question_options,
+            "asked_by": state.coder_question_asked_by,
+        },
+        answer_callback=_deliver_answer,
+    )
+    logger.info("Coder question registered in shared registry")
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
@@ -247,6 +306,61 @@ async def get_pending_approval():
         "needs_human_approval": _current_state.needs_human_approval,
         "pending_approval": _current_state.pending_approval or {},
     }
+
+
+@app.get("/api/question")
+async def get_pending_question():
+    """Return the current pending coder question (for page-reload recovery)."""
+    if not _current_state:
+        return {"needs_coder_answer": False, "coder_question": {}}
+    if not _current_state.needs_coder_answer:
+        return {"needs_coder_answer": False, "coder_question": {}}
+    return {
+        "needs_coder_answer": True,
+        "coder_question": {
+            "question": _current_state.coder_question,
+            "context": _current_state.coder_question_context,
+            "options": _current_state.coder_question_options,
+            "asked_by": _current_state.coder_question_asked_by,
+        },
+    }
+
+
+@app.post("/api/answer")
+async def submit_coder_answer(req: AnswerRequest):
+    """Submit a human answer to a coder's mid-task question."""
+    global _current_state
+
+    if not isinstance(_current_state, GraphState):
+        return {"error": "No pending question"}
+
+    if not _current_state.needs_coder_answer:
+        return {"error": "No pending question"}
+
+    answer = req.answer.strip()
+    if not answer:
+        return {"error": "Answer must not be empty"}
+
+    # Deliver via registry if registered (supports both web and Telegram)
+    if approval_registry.is_question_pending:
+        delivered = approval_registry.deliver_answer(answer)
+        if delivered:
+            return {"status": "answer_submitted", "answer": answer}
+
+    # Fallback: mutate state directly and queue resume
+    from app.core.events import emit_coder_answer
+    _current_state.coder_question_answer = answer
+    _current_state.needs_coder_answer = False
+    emit_coder_answer(
+        asked_by=_current_state.coder_question_asked_by,
+        answer=answer,
+        item_id=(_current_state.current_item.id if _current_state.current_item else ""),
+    )
+    repo_root = str(_current_state.repo_root or "")
+    if _task_queue is not None:
+        await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
+
+    return {"status": "answer_submitted", "answer": answer}
 
 
 @app.post("/api/approve")

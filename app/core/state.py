@@ -49,6 +49,7 @@ class WorkflowPhase(StrEnum):
     TESTING = "testing"
     DECIDING = "deciding"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
+    WAITING_FOR_ANSWER = "waiting_for_answer"
     COMMITTING = "committing"
     COMPLETE = "complete"
     STOPPED = "stopped"
@@ -73,6 +74,17 @@ class GraphState(BaseModel):
     needs_human_approval: bool = False
     pending_approval: dict[str, Any] = Field(default_factory=dict)
     approval_history: list[dict[str, Any]] = Field(default_factory=list)
+
+    # ── Mid-task coder question ───────────────────────────────────────
+    # A coder can pause mid-item to ask the human a critical question.
+    # The workflow halts at answer_gate_node until coder_question_answer
+    # is populated (via /api/answer or Telegram /answer).
+    needs_coder_answer: bool = False
+    coder_question: str = ""           # the question text
+    coder_question_context: str = ""   # why the coder is asking
+    coder_question_options: list[str] = Field(default_factory=list)  # suggested choices
+    coder_question_asked_by: str = ""  # "coder_a" | "coder_b"
+    coder_question_answer: str = ""    # human's answer (filled by UI/Telegram)
     state_checkpoint_id: str | None = None
     last_checkpoint_path: str | None = None
     resumed_from_checkpoint: bool = False

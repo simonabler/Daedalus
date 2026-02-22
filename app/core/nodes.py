@@ -23,6 +23,7 @@ from app.core.events import (
     emit_agent_result,
     emit_agent_thinking,
     emit_approval_needed,
+    emit_coder_question,
     emit_commit,
     emit_error,
     emit_node_end,
@@ -61,6 +62,55 @@ logger = get_logger("core.nodes")
 
 CHECKBOX_RE = re.compile(r"^- \[(?P<mark>[ xX])\]\s*(?:Item\s+\d+:\s*)?(?P<desc>.+)$")
 ROUTER_INTENTS = {"code", "status", "research", "resume"}
+
+
+# -- Helper: parse ask_human signal from coder response -------------------
+
+def _parse_coder_question(response: str) -> dict | None:
+    """Return the parsed ask_human payload if the coder asked a question, else None.
+
+    The coder signals a question by returning a JSON object whose top-level key
+    ``"action"`` equals ``"ask_human"``.  The response must be *only* that JSON
+    (possibly wrapped in a single markdown code fence) — any preamble text
+    disqualifies it to avoid false positives.
+
+    Returns a dict with keys: question, context, options (may be empty list).
+    """
+    text = response.strip()
+
+    # Strip optional ```json / ``` fences
+    if text.startswith("```"):
+        lines = text.splitlines()
+        # Drop opening fence line and closing fence line
+        inner = "\n".join(
+            line for line in lines[1:]
+            if not line.strip().startswith("```")
+        )
+        text = inner.strip()
+
+    # Must look like a JSON object to avoid expensive parsing on normal output
+    if not text.startswith("{"):
+        return None
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("action") != "ask_human":
+        return None
+
+    question = str(payload.get("question", "")).strip()
+    if not question:
+        return None
+
+    return {
+        "question": question,
+        "context": str(payload.get("context", "")).strip(),
+        "options": [str(o) for o in payload.get("options", []) if o],
+    }
 
 
 # -- Helper: invoke LLM with tools + event emission -----------------------
@@ -1264,8 +1314,45 @@ def coder_node(state: GraphState) -> dict:
         f"5. Verify using preferred command: `{preferred_test_cmd or 'python -m pytest -q'}`."
     )
 
+    # If the human answered a previous question from this coder, inject the
+    # answer as the first message so the coder continues with that context.
+    messages: list = []
+    if state.coder_question_answer and state.coder_question_asked_by == active:
+        messages.append(HumanMessage(
+            content=(
+                "[Human answered your earlier question]\n"
+                f"Q: {state.coder_question}\n"
+                f"A: {state.coder_question_answer}\n\n"
+                "Continue implementing the task using this answer as your guide."
+            )
+        ))
+
+    messages.append(HumanMessage(content="\n\n".join(prompt_parts)))
+
     tools = DOCUMENTER_TOOLS if active == "documenter" else CODER_TOOLS
-    result = _invoke_agent(active, [HumanMessage(content="\n\n".join(prompt_parts))], tools, inject_memory=True)
+    result = _invoke_agent(active, messages, tools, inject_memory=True)
+
+    # Detect ask_human signal — coder wants to pause for human input
+    question_payload = _parse_coder_question(result)
+    if question_payload:
+        emit_coder_question(
+            asked_by=active,
+            question=question_payload["question"],
+            context=question_payload["context"],
+            options=question_payload["options"],
+            item_id=item.id,
+        )
+        emit_node_end(active, "Coding", "Paused — coder is asking the human a question")
+        return {
+            "needs_coder_answer": True,
+            "coder_question": question_payload["question"],
+            "coder_question_context": question_payload["context"],
+            "coder_question_options": question_payload["options"],
+            "coder_question_asked_by": active,
+            "coder_question_answer": "",   # clear any previous answer
+            "phase": WorkflowPhase.WAITING_FOR_ANSWER,
+            "stop_reason": "waiting_for_coder_answer",
+        }
 
     emit_node_end(active, "Coding", f"Implementation complete — handing to {_reviewer_label(reviewer)} for peer review")
     with suppress(Exception):
@@ -1275,6 +1362,13 @@ def coder_node(state: GraphState) -> dict:
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
         "total_iterations": state.total_iterations + 1,
+        # Clear any lingering question state from previous items
+        "needs_coder_answer": False,
+        "coder_question": "",
+        "coder_question_context": "",
+        "coder_question_options": [],
+        "coder_question_asked_by": "",
+        "coder_question_answer": "",
     }
     _save_checkpoint_snapshot(state, updates, "code_complete")
     return updates
@@ -1664,6 +1758,51 @@ def _parse_changed_files_from_status(porcelain_status: str) -> tuple[list[str], 
         if "D" in status:
             deleted.append(file_path)
     return changed, deleted
+
+
+def answer_gate_node(state: GraphState) -> dict:
+    """Pause the workflow until the human answers the coder's question.
+
+    The node is visited after coder_node emits a ``coder_question`` event and
+    sets ``needs_coder_answer=True``.  It has two exit paths:
+
+    * Answer received (``coder_question_answer`` is non-empty):
+      Clear the question fields and advance to ``CODING`` so the coder
+      resumes with the answer injected into its next invocation.
+
+    * Still waiting:
+      Return ``WAITING_FOR_ANSWER`` so the orchestrator halts the graph.
+      The web server or Telegram bot will call ``/api/answer`` to populate
+      ``coder_question_answer``, then queue a resume task.
+    """
+    emit_node_start("system", "Answer Gate", item_desc=state.user_request[:100])
+
+    # If the coder question was already answered (e.g. on resume after answer),
+    # clear the fields and let the coder continue.
+    if state.coder_question_answer:
+        emit_status(
+            "system",
+            f"✅ Answer received — resuming {state.coder_question_asked_by}",
+            **_progress_meta(state, "coding"),
+        )
+        emit_node_end("system", "Answer Gate", "Answer delivered, coder will continue")
+        return {
+            "needs_coder_answer": False,
+            "phase": WorkflowPhase.CODING,
+            "stop_reason": "",
+        }
+
+    # Still waiting — halt the workflow
+    emit_status(
+        "system",
+        f"⏳ Waiting for human answer to: {state.coder_question[:120]}",
+        **_progress_meta(state, "waiting_for_answer"),
+    )
+    emit_node_end("system", "Answer Gate", "Halted — waiting for human answer")
+    return {
+        "phase": WorkflowPhase.WAITING_FOR_ANSWER,
+        "stop_reason": "waiting_for_coder_answer",
+    }
 
 
 def human_gate_node(state: GraphState) -> dict:

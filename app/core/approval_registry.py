@@ -28,33 +28,30 @@ logger = get_logger("core.approval_registry")
 
 
 class ApprovalRegistry:
-    """Thread-safe singleton that holds the current pending approval request.
+    """Thread-safe singleton that holds the current pending approval request
+    and/or a pending coder question that requires a human answer.
 
-    Only one approval can be pending at a time (the workflow is halted while
-    waiting).  Either the web server or the Telegram bot can call ``approve``
-    to resolve it.
+    Only one of each can be pending at a time.  Either the web server or the
+    Telegram bot can resolve them.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # ── Approval (approve/reject) ──────────────────────────────────
         self._pending: dict | None = None
         self._resume_callback: Callable[[bool], None] | None = None
+        # ── Coder question (free-text answer) ─────────────────────────
+        self._pending_question: dict | None = None
+        self._answer_callback: Callable[[str], None] | None = None
 
-    # ── Write side (set by the web server task worker) ────────────────
+    # ── Approval write side ───────────────────────────────────────────
 
     def set_pending(
         self,
         pending_payload: dict,
         resume_callback: Callable[[bool], None],
     ) -> None:
-        """Register a pending approval and the callback that will resume/stop the workflow.
-
-        Args:
-            pending_payload: The full ``pending_approval`` dict from GraphState
-                             (contains summary, files, triggers, diff_preview, …).
-            resume_callback: A callable that accepts a single bool (``approved``).
-                             The registry calls this when ``approve()`` is invoked.
-        """
+        """Register a pending approval and the callback that will resume/stop the workflow."""
         with self._lock:
             self._pending = dict(pending_payload)
             self._resume_callback = resume_callback
@@ -69,7 +66,7 @@ class ApprovalRegistry:
             self._pending = None
             self._resume_callback = None
 
-    # ── Read side (polled by web server and Telegram bot) ─────────────
+    # ── Approval read side ────────────────────────────────────────────
 
     @property
     def is_pending(self) -> bool:
@@ -83,33 +80,84 @@ class ApprovalRegistry:
         with self._lock:
             return dict(self._pending) if self._pending is not None else None
 
-    # ── Resolution ────────────────────────────────────────────────────
+    # ── Approval resolution ───────────────────────────────────────────
 
     def approve(self, approved: bool) -> bool:
         """Resolve the pending approval.
 
-        Args:
-            approved: ``True`` to approve and resume, ``False`` to reject and stop.
-
-        Returns:
-            ``True`` if there was a pending approval and it was resolved.
-            ``False`` if nothing was pending (idempotent — safe to call twice).
+        Returns True if there was a pending approval and it was resolved,
+        False if nothing was pending (safe to call twice).
         """
         with self._lock:
             if self._pending is None or self._resume_callback is None:
                 logger.warning("approve() called but nothing is pending — ignoring")
                 return False
-
             callback = self._resume_callback
-            decision = "APPROVED" if approved else "REJECTED"
             self._pending = None
             self._resume_callback = None
 
+        decision = "APPROVED" if approved else "REJECTED"
         logger.info("Approval %s by human", decision)
         try:
             callback(approved)
         except Exception as exc:
             logger.error("Resume callback raised an exception: %s", exc, exc_info=True)
+        return True
+
+    # ── Coder question write side ─────────────────────────────────────
+
+    def set_answer_pending(
+        self,
+        question: dict,
+        answer_callback: Callable[[str], None],
+    ) -> None:
+        """Register a pending coder question and the callback that delivers the answer."""
+        with self._lock:
+            self._pending_question = dict(question)
+            self._answer_callback = answer_callback
+        logger.info("Coder question pending — %s", question.get("question", "")[:80])
+
+    def clear_question(self) -> None:
+        """Remove the pending question without delivering an answer."""
+        with self._lock:
+            self._pending_question = None
+            self._answer_callback = None
+
+    # ── Coder question read side ──────────────────────────────────────
+
+    @property
+    def is_question_pending(self) -> bool:
+        """True if a coder question is waiting for a human answer."""
+        with self._lock:
+            return self._pending_question is not None
+
+    @property
+    def pending_question(self) -> dict | None:
+        """Return a copy of the current question payload, or None."""
+        with self._lock:
+            return dict(self._pending_question) if self._pending_question is not None else None
+
+    # ── Coder question resolution ─────────────────────────────────────
+
+    def deliver_answer(self, answer: str) -> bool:
+        """Deliver the human's answer to the waiting coder.
+
+        Returns True if there was a pending question and the answer was
+        delivered, False if nothing was pending.
+        """
+        with self._lock:
+            if self._pending_question is None or self._answer_callback is None:
+                logger.warning("deliver_answer() called but no question is pending — ignoring")
+                return False
+            callback = self._answer_callback
+            self._pending_question = None
+            self._answer_callback = None
+
+        logger.info("Coder question answered by human: %s", answer[:80])
+        try:
+            callback(answer)
+        except Exception as exc:
+            logger.error("Answer callback raised an exception: %s", exc, exc_info=True)
         return True
 
 

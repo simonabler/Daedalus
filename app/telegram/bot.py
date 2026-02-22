@@ -35,7 +35,6 @@ from app.core.events import EventCategory, WorkflowEvent, subscribe_sync
 from app.core.logging import get_logger
 from app.core.orchestrator import run_workflow
 from app.core.state import GraphState, WorkflowPhase
-
 logger = get_logger("telegram.bot")
 
 # ── Module-level state ───────────────────────────────────────────────────
@@ -90,6 +89,11 @@ def _on_workflow_event(event: WorkflowEvent) -> None:
             _send_approval_notification(event.metadata),
             loop,
         )
+    elif event.category == EventCategory.CODER_QUESTION:
+        asyncio.run_coroutine_threadsafe(
+            _send_question_notification(event.metadata),
+            loop,
+        )
     elif event.category == EventCategory.STATUS:
         phase = (event.metadata or {}).get("phase", "")
         if phase in ("complete", "stopped"):
@@ -134,6 +138,38 @@ async def _send_approval_notification(meta: dict) -> None:
         ]
     ])
 
+    await _notify_all(text, reply_markup=keyboard)
+
+
+async def _send_question_notification(meta: dict) -> None:
+    """Send a coder question to all allowed Telegram users with inline option buttons."""
+    question   = meta.get("question", "(no question)")
+    context    = meta.get("context", "")
+    options    = meta.get("options", [])
+    asked_by   = meta.get("asked_by", "coder")
+    agent_label = "Coder A (Claude)" if asked_by == "coder_a" else "Coder B (GPT)"
+
+    context_part = ""
+    if context:
+        context_part = f"\n\n*Context:*\n_{context[:600]}_"
+
+    text = (
+        f"\U0001f914 *{agent_label} is asking a question*\n\n"
+        f"{question}"
+        f"{context_part}\n\n"
+        f"Reply with /answer <your answer> or use the buttons below."
+    )
+
+    # Build inline keyboard from options (max 4 buttons)
+    buttons = []
+    for i, opt in enumerate(options[:4]):
+        short = opt[:40]
+        buttons.append(InlineKeyboardButton(short, callback_data=f"answer:{i}:{short}"))
+
+    keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+
+    # Store option texts so callback can resolve index → full text
+    # We encode the full option text directly in the callback_data (truncated)
     await _notify_all(text, reply_markup=keyboard)
 
 
@@ -314,6 +350,76 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /answer <text> — deliver a human answer to the waiting coder."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+
+    answer_text = " ".join(context.args).strip() if context.args else ""
+    if not answer_text:
+        await update.message.reply_text(
+            "Usage: /answer <your answer>\n"
+            "Example: /answer Use Redis — we already have it in infrastructure."
+        )
+        return
+
+    if not approval_registry.is_question_pending:
+        await update.message.reply_text(
+            "\u2139\ufe0f No coder question is pending right now."
+        )
+        return
+
+    delivered = approval_registry.deliver_answer(answer_text)
+    if delivered:
+        await update.message.reply_text(
+            f"\U0001f4ac *Answer delivered:* {answer_text}\n\nThe coder will continue.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "\u26a0\ufe0f Could not deliver — question may have already been answered."
+        )
+
+
+async def handle_inline_answer(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle inline keyboard option button presses for coder questions."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_allowed(query.from_user.id):
+        await query.edit_message_text("\u26d4 Not authorized.")
+        return
+
+    data = query.data or ""
+    # Format: "answer:<index>:<text>"
+    parts = data.split(":", 2)
+    answer_text = parts[2] if len(parts) == 3 else ""
+
+    if not answer_text:
+        await query.edit_message_text("\u26a0\ufe0f Could not parse option.")
+        return
+
+    if not approval_registry.is_question_pending:
+        await query.edit_message_text(
+            "\u2139\ufe0f This question has already been answered."
+        )
+        return
+
+    delivered = approval_registry.deliver_answer(answer_text)
+    if delivered:
+        await query.edit_message_text(
+            f"\U0001f4ac *Answer delivered:* {answer_text}\n\nThe coder will continue.",
+            parse_mode="Markdown",
+        )
+    else:
+        await query.edit_message_text(
+            "\u26a0\ufe0f Could not deliver — may have already been answered."
+        )
+
+
 async def handle_inline_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -377,8 +483,10 @@ def create_telegram_app() -> Optional[Application]:
     app.add_handler(CommandHandler("logs",    cmd_logs))
     app.add_handler(CommandHandler("approve", cmd_approve))
     app.add_handler(CommandHandler("reject",  cmd_reject))
+    app.add_handler(CommandHandler("answer",  cmd_answer))
     app.add_handler(CommandHandler("stop",    cmd_stop))
     app.add_handler(CallbackQueryHandler(handle_inline_approval, pattern=r"^approval:"))
+    app.add_handler(CallbackQueryHandler(handle_inline_answer,   pattern=r"^answer:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Subscribe to the shared event bus for push notifications
@@ -386,7 +494,7 @@ def create_telegram_app() -> Optional[Application]:
 
     _telegram_app = app
     logger.info(
-        "Telegram bot configured — commands: /task /status /logs /approve /reject /stop"
+        "Telegram bot configured — commands: /task /status /logs /approve /reject /answer /stop"
     )
     return app
 
