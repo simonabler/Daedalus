@@ -649,6 +649,28 @@ def context_loader_node(state: GraphState) -> dict:
         repo_facts = _heuristic_analysis(repo_path)
 
     summary = _format_context_summary(repo_facts)
+
+    # -- Static analysis (best-effort, never blocks the workflow) ----------
+    static_issues: list[dict] = []
+    try:
+        from app.tools.static_analysis import run_static_analysis
+
+        language = _extract_language(repo_facts)
+        if language:
+            emit_status("planner", f"Running static analysis ({language})…",
+                        **_progress_meta(state, "planning"))
+            raw_issues = run_static_analysis(repo_path, language)
+            static_issues = [i.model_dump() for i in raw_issues]
+            err_count = sum(1 for i in raw_issues if i.severity == "error")
+            warn_count = sum(1 for i in raw_issues if i.severity == "warning")
+            emit_status(
+                "planner",
+                f"Static analysis complete: {err_count} error(s), {warn_count} warning(s)",
+                **_progress_meta(state, "planning"),
+            )
+    except Exception as exc:
+        logger.warning("Static analysis failed (skipping): %s", exc)
+
     emit_status(
         "planner",
         f"Repository context loaded: {summary}",
@@ -662,6 +684,7 @@ def context_loader_node(state: GraphState) -> dict:
         "repo_facts": repo_facts,
         "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
         "context_loaded": True,
+        "static_issues": static_issues,
     }
 
 
@@ -794,6 +817,53 @@ def _extract_test_command(repo_facts: dict) -> str | None:
     if isinstance(cmd, str) and cmd.strip():
         return cmd.strip()
     return None
+
+
+def _extract_language(repo_facts: dict) -> str:
+    """Return a normalised language string suitable for static analysis routing."""
+    tech_stack = repo_facts.get("tech_stack")
+    if isinstance(tech_stack, dict):
+        lang = tech_stack.get("language", "")
+        if isinstance(lang, str):
+            return lang.lower()
+    lang = repo_facts.get("language", "")
+    return lang.lower() if isinstance(lang, str) else ""
+
+
+def _format_static_issues_for_prompt(
+    issues: list[dict],
+    max_issues: int = 20,
+) -> str:
+    """Format serialised StaticIssue dicts into a concise prompt section."""
+    if not issues:
+        return ""
+
+    errors   = [i for i in issues if i.get("severity") == "error"]
+    warnings = [i for i in issues if i.get("severity") == "warning"]
+    infos    = [i for i in issues if i.get("severity") == "info"]
+
+    selected = (errors + warnings + infos)[:max_issues]
+    total = len(issues)
+    shown = len(selected)
+
+    header = (
+        f"## Static Analysis — {len(errors)} error(s)"
+        f", {len(warnings)} warning(s)"
+        f", {len(infos)} info(s)"
+    )
+    if total > shown:
+        header += f" (showing top {shown} of {total})"
+
+    lines = [header, ""]
+    for issue in selected:
+        sev = issue.get("severity", "warning").upper()
+        rule = f" [{issue['rule_id']}]" if issue.get("rule_id") else ""
+        loc = f"{issue.get('file', '?')}:{issue.get('line', 0)}"
+        msg = issue.get("message", "")
+        tool = issue.get("tool", "")
+        lines.append(f"- [{sev}]{rule} {loc} — {msg}  (tool: {tool})")
+
+    return "\n".join(lines)
 
 
 def _format_repo_context_for_prompt(repo_facts: dict) -> str:
@@ -1031,6 +1101,8 @@ def planner_plan_node(state: GraphState) -> dict:
     if state.repo_facts:
         context_parts.append(_format_repo_context_for_prompt(state.repo_facts))
         context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
+    if state.static_issues:
+        context_parts.append(_format_static_issues_for_prompt(state.static_issues))
     if state.context_listing:
         context_parts.append(
             "Repository listing (depth<=2):\n"
@@ -1294,6 +1366,8 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(f"**Test Report (previous)**:\n{item.test_report}")
     if state.repo_facts:
         prompt_parts.append(_format_repo_context_for_prompt(state.repo_facts))
+    if state.static_issues:
+        prompt_parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=10))
     if state.agent_instructions:
         prompt_parts.append(
             "**Repository Documentation (excerpt)**:\n"

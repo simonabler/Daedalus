@@ -117,6 +117,11 @@ class GraphState(BaseModel):
     # ── Messages (for LangGraph message passing) ──────────────────────
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
 
+    # ── Static analysis ──────────────────────────────────────────────────
+    # Populated by context_loader_node after repo facts are detected.
+    # Each entry is a dict representation of a StaticIssue.
+    static_issues: list[dict[str, Any]] = Field(default_factory=list)
+
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0
     completed_items: int = 0
