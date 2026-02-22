@@ -5,17 +5,19 @@ Nodes call `emit(...)` to publish structured events.  The web server
 forward to the user in real-time.
 
 Event categories:
-  node_start    — a graph node begins execution
-  node_end      — a graph node finishes
-  agent_think   — an LLM is invoked (before response)
-  agent_result  — LLM returned a response
-  tool_call     — a tool is being called
-  tool_result   — tool returned
-  plan          — planner produced / updated the plan
-  status        — phase/progress change
-  verdict       — review or test verdict (APPROVE/REWORK/PASS/FAIL)
-  commit        — a commit was made
-  error         — something went wrong
+  node_start       — a graph node begins execution
+  node_end         — a graph node finishes
+  agent_think      — an LLM is invoked (before response)
+  agent_result     — LLM returned a response
+  tool_call        — a tool is being called
+  tool_result      — tool returned
+  plan             — planner produced / updated the plan
+  status           — phase/progress change
+  verdict          — review or test verdict (APPROVE/REWORK/PASS/FAIL)
+  commit           — a commit was made
+  error            — something went wrong
+  approval_needed  — human gate fired; UI must show approve/reject panel
+  approval_done    — human submitted an approve or reject decision
 """
 
 from __future__ import annotations
@@ -54,6 +56,8 @@ class EventCategory(str, Enum):
     VERDICT = "verdict"
     COMMIT = "commit"
     ERROR = "error"
+    APPROVAL_NEEDED = "approval_needed"
+    APPROVAL_DONE = "approval_done"
 
 
 @dataclass
@@ -242,4 +246,37 @@ def emit_error(agent: str, error: str) -> None:
         agent=agent,
         title=f"❌ Error in {agent}",
         detail=error,
+    ))
+
+
+def emit_approval_needed(pending: dict) -> None:
+    """Emit when the human gate fires and the UI must show an approve/reject panel.
+
+    ``pending`` is the full ``pending_approval`` dict from GraphState, which
+    contains: summary, files, triggers, diff_preview, git_status, timestamp.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.APPROVAL_NEEDED,
+        agent="system",
+        title="⚠️ Human approval required before commit",
+        detail=pending.get("diff_preview", ""),
+        metadata={
+            "summary": pending.get("summary", ""),
+            "files": pending.get("files", []),
+            "triggers": pending.get("triggers", []),
+            "git_status": pending.get("git_status", ""),
+            "timestamp": pending.get("timestamp", ""),
+        },
+    ))
+
+
+def emit_approval_done(approved: bool, pending_type: str = "commit") -> None:
+    """Emit after the human has submitted an approve or reject decision."""
+    icon = "✅" if approved else "❌"
+    action = "approved" if approved else "rejected"
+    emit(WorkflowEvent(
+        category=EventCategory.APPROVAL_DONE,
+        agent="system",
+        title=f"{icon} Human {action} the {pending_type}",
+        metadata={"approved": approved, "pending_type": pending_type},
     ))

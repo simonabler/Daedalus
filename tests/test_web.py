@@ -67,6 +67,151 @@ class TestApprovalEndpoint:
         data = resp.json()
         assert "error" in data
 
+    def test_approve_with_pending_state(self, client):
+        """When a state with needs_human_approval is present, approving returns 'approved'."""
+        from unittest.mock import MagicMock
+        from app.core.state import GraphState, WorkflowPhase
+
+        state = GraphState(
+            user_request="test",
+            needs_human_approval=True,
+            pending_approval={"approved": False, "type": "commit", "files": [], "triggers": []},
+            phase=WorkflowPhase.WAITING_FOR_APPROVAL,
+        )
+
+        import app.web.server as srv
+        original = srv._current_state
+        srv._current_state = state
+        try:
+            with patch("app.web.server.checkpoint_manager") as mock_cp:
+                mock_cp.mark_latest_approval.return_value = None
+                resp = client.post("/api/approve", json={"approved": True})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "approved"
+            assert state.needs_human_approval is False
+        finally:
+            srv._current_state = original
+
+    def test_reject_with_pending_state(self, client):
+        """Rejecting stops the workflow."""
+        from app.core.state import GraphState, WorkflowPhase
+
+        state = GraphState(
+            user_request="test",
+            needs_human_approval=True,
+            pending_approval={"approved": False, "type": "commit", "files": [], "triggers": []},
+            phase=WorkflowPhase.WAITING_FOR_APPROVAL,
+        )
+
+        import app.web.server as srv
+        original = srv._current_state
+        srv._current_state = state
+        try:
+            with patch("app.web.server.checkpoint_manager") as mock_cp:
+                mock_cp.mark_latest_approval.return_value = None
+                resp = client.post("/api/approve", json={"approved": False})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "rejected"
+            assert state.phase == WorkflowPhase.STOPPED
+            assert state.stop_reason == "user_rejected"
+        finally:
+            srv._current_state = original
+
+
+class TestPendingEndpoint:
+    def test_pending_when_idle(self, client):
+        import app.web.server as srv
+        original = srv._current_state
+        srv._current_state = None
+        try:
+            resp = client.get("/api/pending")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["needs_human_approval"] is False
+            assert data["pending_approval"] == {}
+        finally:
+            srv._current_state = original
+
+    def test_pending_when_waiting(self, client):
+        from app.core.state import GraphState, WorkflowPhase
+
+        state = GraphState(
+            user_request="test",
+            needs_human_approval=True,
+            pending_approval={
+                "approved": False,
+                "type": "commit",
+                "summary": "2 files changed",
+                "files": ["app/main.py", "tests/test_main.py"],
+                "triggers": [{"type": "commit", "reason": "Commit requires approval"}],
+                "diff_preview": "diff --git a/app/main.py...",
+                "git_status": "M app/main.py",
+            },
+            phase=WorkflowPhase.WAITING_FOR_APPROVAL,
+        )
+
+        import app.web.server as srv
+        original = srv._current_state
+        srv._current_state = state
+        try:
+            resp = client.get("/api/pending")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["needs_human_approval"] is True
+            assert data["pending_approval"]["summary"] == "2 files changed"
+            assert len(data["pending_approval"]["files"]) == 2
+        finally:
+            srv._current_state = original
+
+
+class TestApprovalEvent:
+    def test_emit_approval_needed_produces_correct_category(self):
+        from app.core.events import emit_approval_needed, get_history, EventCategory
+        import app.core.events as ev_module
+
+        # Clear history
+        ev_module._history.clear()
+
+        emit_approval_needed({
+            "summary": "3 files changed",
+            "files": ["a.py", "b.py", "c.py"],
+            "triggers": [{"type": "commit", "reason": "Commit requires approval"}],
+            "diff_preview": "--- a\n+++ b\n@@ -1 +1 @@\n+new line",
+            "git_status": "M a.py",
+            "timestamp": "2026-01-01T00:00:00Z",
+        })
+
+        history = get_history(1)
+        assert len(history) == 1
+        evt = history[0]
+        assert evt["category"] == EventCategory.APPROVAL_NEEDED.value
+        assert evt["metadata"]["summary"] == "3 files changed"
+        assert "a.py" in evt["metadata"]["files"]
+        assert evt["metadata"]["triggers"][0]["type"] == "commit"
+
+    def test_emit_approval_done_approved(self):
+        from app.core.events import emit_approval_done, get_history, EventCategory
+        import app.core.events as ev_module
+
+        ev_module._history.clear()
+        emit_approval_done(approved=True, pending_type="commit")
+
+        history = get_history(1)
+        assert history[0]["category"] == EventCategory.APPROVAL_DONE.value
+        assert history[0]["metadata"]["approved"] is True
+
+    def test_emit_approval_done_rejected(self):
+        from app.core.events import emit_approval_done, get_history, EventCategory
+        import app.core.events as ev_module
+
+        ev_module._history.clear()
+        emit_approval_done(approved=False, pending_type="commit")
+
+        history = get_history(1)
+        assert history[0]["metadata"]["approved"] is False
+
 
 class TestUI:
     def test_serves_html(self, client):

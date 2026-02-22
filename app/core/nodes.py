@@ -22,6 +22,7 @@ from app.core.config import get_settings
 from app.core.events import (
     emit_agent_result,
     emit_agent_thinking,
+    emit_approval_needed,
     emit_commit,
     emit_error,
     emit_node_end,
@@ -1727,6 +1728,7 @@ def human_gate_node(state: GraphState) -> dict:
         "Human approval required before commit",
         **_progress_meta(state, "waiting_for_approval"),
     )
+    emit_approval_needed(payload)
     emit_node_end("planner", "Human Gate", "Paused for human approval")
     return updates
 

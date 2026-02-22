@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import WorkflowEvent, get_history, set_event_loop, subscribe_async
+from app.core.events import emit_approval_done
 from app.core.logging import get_logger
 from app.core.orchestrator import request_shutdown, reset_shutdown, run_workflow
 from app.core.state import GraphState, WorkflowPhase
@@ -186,6 +187,17 @@ async def get_events(limit: int = 200):
     return {"events": get_history(limit)}
 
 
+@app.get("/api/pending")
+async def get_pending_approval():
+    """Return the current pending approval payload (for page-reload recovery)."""
+    if not _current_state:
+        return {"needs_human_approval": False, "pending_approval": {}}
+    return {
+        "needs_human_approval": _current_state.needs_human_approval,
+        "pending_approval": _current_state.pending_approval or {},
+    }
+
+
 @app.post("/api/approve")
 async def approve_pending_action(req: ApprovalRequest):
     """Approve or reject a pending human-gate action."""
@@ -211,6 +223,7 @@ async def approve_pending_action(req: ApprovalRequest):
         _current_state.stop_reason = ""
         repo_root = str(_current_state.repo_root or "")
         checkpoint_manager.mark_latest_approval(True, repo_root=repo_root)
+        emit_approval_done(approved=True, pending_type=(_current_state.pending_approval or {}).get("type", "commit"))
 
         if _task_queue is not None:
             await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
@@ -222,6 +235,7 @@ async def approve_pending_action(req: ApprovalRequest):
     _current_state.phase = WorkflowPhase.STOPPED
     _current_state.stop_reason = "user_rejected"
     checkpoint_manager.mark_latest_approval(False, repo_root=str(_current_state.repo_root or ""))
+    emit_approval_done(approved=False, pending_type=(_current_state.pending_approval or {}).get("type", "commit"))
     return {"status": "rejected", "message": "Action rejected, workflow stopped."}
 
 
