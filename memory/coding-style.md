@@ -1,5 +1,5 @@
 # Coding Style Guide
-> Shared by Coder A (Claude) and Coder B (GPT-5.3).
+> Shared by Coder 1 and Coder 2.
 > Both coders read this before every task and add entries after reviews.
 
 ## Rules

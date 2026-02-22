@@ -13,21 +13,36 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
-    # LLM keys
+    # LLM API keys (only required for the providers you actually use)
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
-    # LLM model identifiers
+    # Ollama base URL — set this when using local Ollama models
+    # Example: OLLAMA_BASE_URL=http://localhost:11434
+    ollama_base_url: str = "http://localhost:11434"
+
+    # Model identifiers — prefix determines the provider:
+    #   "ollama:<model>"     → local Ollama  (e.g. "ollama:llama3.1:70b")
+    #   "claude-*" / "claude" → Anthropic API
+    #   anything else        → OpenAI API    (e.g. "gpt-4o", "gpt-4o-mini")
     planner_model: str = "gpt-4o-mini"
-    coder_a_model: str = "claude-sonnet-4-20250514"  # Coder A - Claude
-    coder_b_model: str = "gpt-5.2"  # Coder B - GPT-5.2
+    coder_1_model: str = "gpt-4o-mini"   # Coder 1 — configure freely
+    coder_2_model: str = "gpt-4o-mini"   # Coder 2 — configure freely
     documenter_model: str = "gpt-4o-mini"
     tester_model: str = "gpt-4o-mini"
 
-    # Legacy alias (kept for backwards compatibility)
+    # Legacy aliases — kept so existing code that references coder_a/coder_b still works
+    @property
+    def coder_a_model(self) -> str:
+        return self.coder_1_model
+
+    @property
+    def coder_b_model(self) -> str:
+        return self.coder_2_model
+
     @property
     def coder_model(self) -> str:
-        return self.coder_a_model
+        return self.coder_1_model
 
     # Telegram
     telegram_bot_token: str = ""

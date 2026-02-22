@@ -44,15 +44,15 @@ A production-ready, multi-agent AI coding system that autonomously plans, implem
 │       └─ code → (workflow below)                           │
 │                                                             │
 │  ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐ │
-│  │ Planner  │→ │Coder A  │→ │Peer Review│→ │  Planner   │ │
-│  │(GPT-4o-m)│  │(Claude) │  │by Coder B │  │  Review    │ │
-│  │          │  │         │  │(gpt-5.2)  │  │ (final ok) │ │
+│  │ Planner  │→ │Coder 1  │→ │Peer Review│→ │  Planner   │ │
+│  │(GPT-4o-m)│  │(configu-│  │by Coder 2 │  │  Review    │ │
+│  │          │  │rable)   │  │           │  │ (final ok) │ │
 │  └──────────┘  └─────────┘  └───────────┘  └─────┬──────┘ │
 │       │                                          │        │
 │       │       ┌─────────┐  ┌───────────┐         │        │
-│       │       │Coder B  │→ │Peer Review│─────────┘        │
-│       │       │(gpt-5.2)│  │by Coder A │                  │
-│       │       │         │  │(Claude)   │                  │
+│       │       │Coder 2  │→ │Peer Review│─────────┘        │
+│       │       │(configu-│  │by Coder 1 │                  │
+│       │       │ rable)  │  │           │                  │
 │       │       └─────────┘  └───────────┘                  │
 │       │                                                   │
 │  ┌────▼─────┐  ┌─────────────┐  ┌──────────────────────┐ │
@@ -130,10 +130,10 @@ Search your codebase without shell commands:
 
 The system uses **two coders** that alternate and cross-review each other:
 
-- **Even-numbered items** (0, 2, 4…): Coder A (Claude) implements → Coder B (gpt-5.2) reviews
-- **Odd-numbered items** (1, 3, 5…): Coder B (gpt-5.2) implements → Coder A (Claude) reviews
+- **Even-numbered items** (0, 2, 4…): Coder 1 implements → Coder 2 reviews
+- **Odd-numbered items** (1, 3, 5…): Coder 2 implements → Coder 1 reviews
 
-This cross-review catches different classes of bugs — each model has different strengths and blind spots.
+Both coders are fully configurable via `.env` — they can run on OpenAI, Anthropic, or local Ollama models independently.
 
 ```
 Router (classify intent)
@@ -159,8 +159,8 @@ On unexpected error: → STOP and re-plan
 | **Router** | GPT-4o-mini | Classifies intent (code, status, research, resume) |
 | **Context Loader** | Filesystem + LLM | Analyzes repository structure and conventions |
 | **Planner** | GPT-4o-mini | Understands goals, creates context-aware plans, final review gate |
-| **Coder A** | Claude Sonnet 4 | Implements even-numbered items, peer-reviews Coder B's work |
-| **Coder B** | gpt-5.2 | Implements odd-numbered items, peer-reviews Coder A's work |
+| **Coder 1** | Configurable (see `.env`) | Implements even-numbered items, peer-reviews Coder 2's work |
+| **Coder 2** | Configurable (see `.env`) | Implements odd-numbered items, peer-reviews Coder 1's work |
 | **Tester** | GPT-4o-mini + tools | Runs tests/linters/builds with detected commands |
 | **Human Gate** | Interactive | Approval checkpoint before commits |
 
@@ -187,13 +187,14 @@ cp .env.example .env
 ```
 
 Required settings:
-- `OPENAI_API_KEY` — for the Planner agent (GPT-4o-mini)
-- `ANTHROPIC_API_KEY` — for the Coder agent (Claude)
 - `TARGET_REPO_PATH` — path to the Git repository the agents will work on
+- API keys only for the providers you use: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+- `CODER_1_MODEL` / `CODER_2_MODEL` — model strings determine the provider automatically
 
-Optional:
-- `TELEGRAM_BOT_TOKEN` — enables Telegram bot interface
-- `TELEGRAM_ALLOWED_USER_IDS` — restrict who can use the bot
+Model string format:
+- OpenAI: `gpt-4o`, `gpt-4o-mini`, …
+- Anthropic: `claude-opus-4-5`, `claude-sonnet-4-20250514`, …
+- Ollama (local): `ollama:llama3.1:70b`, `ollama:deepseek-coder-v2`, …
 
 ### 3. Run
 
@@ -554,14 +555,17 @@ See `.env.example` for all available settings. Key options:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | (required) | OpenAI API key for Planner + Coder B |
-| `ANTHROPIC_API_KEY` | (required) | Anthropic API key for Coder A |
+| `OPENAI_API_KEY` | — | OpenAI API key (required if any model uses OpenAI) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (required if any model uses Anthropic) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (required if any model uses Ollama) |
 | `TARGET_REPO_PATH` | (required) | Path to target Git repo |
-| `CODER_A_MODEL` | `claude-sonnet-4-20250514` | Model for Coder A |
-| `CODER_B_MODEL` | `gpt-5.2` | Model for Coder B |
+| `CODER_1_MODEL` | `gpt-4o-mini` | Model for Coder 1 — prefix `ollama:` for local models |
+| `CODER_2_MODEL` | `gpt-4o-mini` | Model for Coder 2 — prefix `ollama:` for local models |
 | `PLANNER_MODEL` | `gpt-4o-mini` | Model for Planner |
-| `TELEGRAM_BOT_TOKEN` | (optional) | Telegram bot token |
-| `TELEGRAM_ALLOWED_USER_IDS` | (optional) | Comma-separated user IDs |
+| `TESTER_MODEL` | `gpt-4o-mini` | Model for Tester |
+| `DOCUMENTER_MODEL` | `gpt-4o-mini` | Model for Documenter |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token (optional) |
+| `TELEGRAM_ALLOWED_USER_IDS` | — | Comma-separated user IDs (optional) |
 | `WEB_HOST` | `127.0.0.1` | Web UI host |
 | `WEB_PORT` | `8420` | Web UI port |
 | `MAX_ITERATIONS_PER_ITEM` | `5` | Max rework attempts per item |

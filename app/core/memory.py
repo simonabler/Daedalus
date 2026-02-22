@@ -41,7 +41,7 @@ MAX_MEMORY_CHARS = 8_000
 _SEEDS = {
     "coding_style": """\
 # Coding Style Guide
-> Shared by Coder A (Claude) and Coder B (GPT-5.2).
+> Shared by Coder 1 and Coder 2.
 > Both coders read this before every task and add entries after reviews.
 
 ## Rules

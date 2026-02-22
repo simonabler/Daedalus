@@ -12,7 +12,7 @@
 ## What is Daedalus?
 
 A local, autonomous multi-agent coding system. It receives a task, plans it, implements
-it with two alternating LLM coders (Claude + GPT), cross-reviews, tests, and commits —
+it with two alternating LLM coders (configurable provider), cross-reviews, tests, and commits —
 all with human approval at critical gates.
 
 Daedalus is a **tool**, not a library. It operates on OTHER repositories via `TARGET_REPO_PATH`.
@@ -31,8 +31,8 @@ context_loader_node  — reads target repo's AGENT.md, README, detects tech stac
 planner_plan_node    — breaks task into TodoItems with acceptance criteria
     ↓
 ┌── coder_node ──────────────────────────────────────────────┐
-│   Coder A (Claude)  — even items                           │
-│   Coder B (GPT)     — odd items                            │
+│   Coder 1  — even items                               │
+│   Coder 2  — odd items                                │
 └────────────────────────────────────────────────────────────┘
     ↓
 peer_review_node     — OTHER coder reviews (cross-model)
@@ -130,10 +130,10 @@ System prompts live in `app/agents/prompts/`:
 |------|------|-------|
 | `router.txt` | Intent classification | planner model |
 | `supervisor_planner.txt` | Planner / project manager | GPT-4o-mini |
-| `coder_a.txt` | Coder A | Claude |
-| `coder_b.txt` | Coder B | GPT |
-| `peer_reviewer_a.txt` | Reviewer A (reviews Coder B's work) | Claude |
-| `peer_reviewer_b.txt` | Reviewer B (reviews Coder A's work) | GPT |
+| `coder_a.txt` | Coder 1 | Configurable |
+| `coder_b.txt` | Coder 2 | Configurable |
+| `peer_reviewer_a.txt` | Reviewer 1 (reviews Coder 2's work) | Configurable |
+| `peer_reviewer_b.txt` | Reviewer 2 (reviews Coder 1's work) | Configurable |
 | `tester.txt` | Test agent | GPT-4o-mini |
 | `documenter.txt` | Documentation agent | configurable |
 
@@ -205,7 +205,7 @@ All core workflow components are implemented and tested:
 
 - ✅ Router node with `router.txt` system prompt
 - ✅ Context loader with self-referential AGENT.md protection
-- ✅ Dual-coder system (Coder A / Coder B alternating)
+- ✅ Dual-coder system (Coder 1 / Coder 2 alternating, provider-agnostic)
 - ✅ Cross-model peer review with shared memory
 - ✅ Learn-from-review node (auto-extracts insights)
 - ✅ Human gate before every commit

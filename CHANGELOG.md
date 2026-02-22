@@ -5,6 +5,23 @@ All notable changes to the Daedalus project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [2.1.0] - 2026-02-22
+
+### Changed — Provider-agnostic Coder configuration
+
+- **Removed hardcoded provider dependencies.** Coder 1 and Coder 2 are no longer tied to specific LLM providers (Claude / GPT). Any model from any supported provider can be assigned to either coder.
+- **New env variables**: `CODER_1_MODEL` and `CODER_2_MODEL` replace the old `CODER_A_MODEL` / `CODER_B_MODEL`.
+- **Provider routing by model name prefix:**
+  - `ollama:<model>` → local Ollama (e.g. `ollama:llama3.1:70b`)
+  - `claude-*` → Anthropic API
+  - anything else → OpenAI API
+- **Ollama support added** via `langchain-ollama`. Install with `pip install "daedalus[ollama]"`.
+- **API keys are now optional** — only keys for providers actually in use need to be set.
+- Renamed prompts: `coder_a.txt` / `coder_b.txt` now refer to "Coder 1" / "Coder 2" with no model name mentions.
+- Renamed prompts: `peer_reviewer_a.txt` / `peer_reviewer_b.txt` updated accordingly.
+- `config.py`: added `ollama_base_url`, `coder_1_model`, `coder_2_model` fields. Old `coder_a_model` / `coder_b_model` kept as properties for backwards compatibility.
+- `pyproject.toml`: added `[ollama]` optional dependency group.
+
 ## [2.0.0] - 2026-02-21
 
 ### 🚀 Major Release: Production-Ready Codex-Like Interaction

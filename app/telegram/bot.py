@@ -147,7 +147,7 @@ async def _send_question_notification(meta: dict) -> None:
     context    = meta.get("context", "")
     options    = meta.get("options", [])
     asked_by   = meta.get("asked_by", "coder")
-    agent_label = "Coder A (Claude)" if asked_by == "coder_a" else "Coder B (GPT)"
+    agent_label = "Coder 1" if asked_by == "coder_a" else "Coder 2"
 
     context_part = ""
     if context:
