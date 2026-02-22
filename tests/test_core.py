@@ -114,7 +114,10 @@ class TestDualCoderSettings:
 
     def test_custom_models(self):
         from app.core.config import Settings
-        s = Settings(coder_a_model="claude-opus-4-0-20250514", coder_b_model="gpt-4o")
+        s = Settings(coder_1_model="claude-opus-4-0-20250514", coder_2_model="gpt-4o")
+        assert s.coder_1_model == "claude-opus-4-0-20250514"
+        assert s.coder_2_model == "gpt-4o"
+        # Legacy properties still work
         assert s.coder_a_model == "claude-opus-4-0-20250514"
         assert s.coder_b_model == "gpt-4o"
 
