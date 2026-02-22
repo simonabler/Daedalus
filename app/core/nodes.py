@@ -671,6 +671,24 @@ def context_loader_node(state: GraphState) -> dict:
     except Exception as exc:
         logger.warning("Static analysis failed (skipping): %s", exc)
 
+    # -- Call graph analysis (best-effort, never blocks the workflow) -------
+    call_graph: dict = {}
+    try:
+        from app.analysis.call_graph import CallGraphAnalyzer, format_call_graph_for_prompt
+
+        emit_status("planner", "Building call graph…", **_progress_meta(state, "planning"))
+        cg_analyzer = CallGraphAnalyzer(repo_path)
+        cg = cg_analyzer.analyze()
+        call_graph = cg.to_dict()
+        emit_status(
+            "planner",
+            f"Call graph ready: {len(cg.all_functions())} functions, "
+            f"{sum(len(v) for v in cg.callees.values())} edges",
+            **_progress_meta(state, "planning"),
+        )
+    except Exception as exc:
+        logger.warning("Call graph analysis failed (skipping): %s", exc)
+
     emit_status(
         "planner",
         f"Repository context loaded: {summary}",
@@ -685,6 +703,7 @@ def context_loader_node(state: GraphState) -> dict:
         "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
         "context_loaded": True,
         "static_issues": static_issues,
+        "call_graph": call_graph,
     }
 
 
@@ -828,6 +847,22 @@ def _extract_language(repo_facts: dict) -> str:
             return lang.lower()
     lang = repo_facts.get("language", "")
     return lang.lower() if isinstance(lang, str) else ""
+
+
+def _format_call_graph_for_prompt(
+    call_graph: dict,
+    max_entries: int = 15,
+) -> str:
+    """Format a serialised CallGraph dict into a concise prompt section."""
+    if not call_graph:
+        return ""
+    try:
+        from app.analysis.call_graph import CallGraph, format_call_graph_for_prompt
+        cg = CallGraph.from_dict(call_graph)
+        return format_call_graph_for_prompt(cg, max_entries=max_entries)
+    except Exception as exc:
+        logger.debug("Could not format call graph for prompt: %s", exc)
+        return ""
 
 
 def _format_static_issues_for_prompt(
@@ -1103,6 +1138,8 @@ def planner_plan_node(state: GraphState) -> dict:
         context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
     if state.static_issues:
         context_parts.append(_format_static_issues_for_prompt(state.static_issues))
+    if state.call_graph:
+        context_parts.append(_format_call_graph_for_prompt(state.call_graph))
     if state.context_listing:
         context_parts.append(
             "Repository listing (depth<=2):\n"
@@ -1368,6 +1405,8 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(_format_repo_context_for_prompt(state.repo_facts))
     if state.static_issues:
         prompt_parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=10))
+    if state.call_graph:
+        prompt_parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=10))
     if state.agent_instructions:
         prompt_parts.append(
             "**Repository Documentation (excerpt)**:\n"
@@ -1473,13 +1512,16 @@ def peer_review_node(state: GraphState) -> dict:
 
     item.status = ItemStatus.IN_REVIEW
 
+    call_graph_ctx = _format_call_graph_for_prompt(state.call_graph, max_entries=8) if state.call_graph else ""
+
     prompt = (
         f"## Peer Code Review\n\n"
         f"**Reviewer**: {rev_label}\n"
         f"**Implementer**: {impl_label}\n"
         f"**Item**: {item.id} — {item.description}\n\n"
         f"**Implementer's Report**:\n{state.last_coder_result}\n\n"
-        f"Review the changes. Also verify consistency with the shared memory "
+        + (f"{call_graph_ctx}\n\n" if call_graph_ctx else "")
+        + f"Review the changes. Also verify consistency with the shared memory "
         f"(coding style, architecture decisions, insights):\n"
         f"1. Use `git_command` with `git diff` to see the actual changes.\n"
         f"2. Use `git_command` with `git status` to see which files changed.\n"

@@ -122,6 +122,11 @@ class GraphState(BaseModel):
     # Each entry is a dict representation of a StaticIssue.
     static_issues: list[dict[str, Any]] = Field(default_factory=list)
 
+    # ── Call graph ───────────────────────────────────────────────────────
+    # Populated by context_loader_node. Serialised CallGraph.to_dict().
+    # Keys: callers, callees, file_map, language, files_analysed, parse_errors
+    call_graph: dict[str, Any] = Field(default_factory=dict)
+
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0
     completed_items: int = 0
