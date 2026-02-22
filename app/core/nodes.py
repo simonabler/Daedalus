@@ -12,10 +12,12 @@ import platform
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.agents.models import get_llm, load_system_prompt
+from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import (
     emit_agent_result,
@@ -51,11 +53,13 @@ from app.core.task_routing import (
 from app.tools.build import run_linter, run_tests
 from app.tools.filesystem import list_directory, read_file, write_file
 from app.tools.git import git_command, git_commit_and_push, git_create_branch, git_status
+from app.tools.search import search_in_repo
 from app.tools.terminal import run_terminal
 
 logger = get_logger("core.nodes")
 
 CHECKBOX_RE = re.compile(r"^- \[(?P<mark>[ xX])\]\s*(?:Item\s+\d+:\s*)?(?P<desc>.+)$")
+ROUTER_INTENTS = {"code", "status", "research", "resume"}
 
 
 # -- Helper: invoke LLM with tools + event emission -----------------------
@@ -118,15 +122,25 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
 # -- Tool sets -------------------------------------------------------------
 
-PLANNER_TOOLS = [read_file, write_file, list_directory, git_status, run_terminal]
+PLANNER_TOOLS = [read_file, write_file, list_directory, search_in_repo, git_status, run_terminal]
 
 CODER_TOOLS = [
     read_file, write_file, list_directory,
+    search_in_repo,
     run_terminal, git_status, git_command,
     run_tests, run_linter,
 ]
 
-REVIEWER_TOOLS = [read_file, list_directory, run_terminal, git_status, git_command, run_tests, run_linter]
+REVIEWER_TOOLS = [
+    read_file,
+    list_directory,
+    search_in_repo,
+    run_terminal,
+    git_status,
+    git_command,
+    run_tests,
+    run_linter,
+]
 
 TESTER_TOOLS = [read_file, list_directory, run_terminal, run_tests, run_linter, git_status]
 DOCUMENTER_TOOLS = [read_file, write_file, list_directory, run_terminal, git_status, git_command]
@@ -198,6 +212,16 @@ def _write_todo_file(items: list[TodoItem], user_request: str) -> None:
     write_file.invoke({"path": "tasks/todo.md", "content": "\n".join(lines).strip() + "\n"})
 
 
+def _save_checkpoint_snapshot(state: GraphState, updates: dict, checkpoint_type: str) -> None:
+    """Persist a checkpoint based on current state plus node updates."""
+    try:
+        merged = {**state.model_dump(), **updates}
+        snapshot = GraphState(**merged)
+        checkpoint_manager.save_checkpoint(snapshot, checkpoint_type, repo_root=snapshot.repo_root)
+    except Exception as exc:
+        logger.warning("Checkpoint save failed (%s): %s", checkpoint_type, exc)
+
+
 def _classify_request_intent(user_request: str) -> str:
     """Classify user input into planning intents."""
     text = (user_request or "").strip().lower()
@@ -236,6 +260,78 @@ def _classify_request_intent(user_request: str) -> str:
         return "question_only"
 
     return "new_task"
+
+
+def _heuristic_router_intent(user_request: str) -> str | None:
+    """Fast intent heuristic for router gate."""
+    text = (user_request or "").strip().lower()
+    if not text:
+        return "status"
+
+    resume_markers = (
+        "resume",
+        "continue workflow",
+        "continue task",
+        "continue where",
+        "fortsetzen",
+        "weiterarbeiten",
+        "weiter machen",
+        "nach neustart",
+        "wieder aufnehmen",
+    )
+    if any(marker in text for marker in resume_markers):
+        return "resume"
+
+    status_markers = (
+        "status",
+        "progress",
+        "fortschritt",
+        "current state",
+        "aktueller stand",
+        "wo stehen wir",
+    )
+    if any(marker in text for marker in status_markers):
+        return "status"
+
+    research_markers = (
+        "research",
+        "recherche",
+        "investigate",
+        "analyse",
+        "analyze",
+        "compare",
+        "warum",
+        "why",
+    )
+    if any(marker in text for marker in research_markers):
+        return "research"
+
+    if is_programming_request(text):
+        return "code"
+
+    return None
+
+
+def _parse_router_json(result: str) -> tuple[str | None, float]:
+    """Parse strict JSON router output and validate intent."""
+    try:
+        parsed = json.loads((result or "").strip())
+    except json.JSONDecodeError:
+        return None, 0.0
+
+    if not isinstance(parsed, dict):
+        return None, 0.0
+
+    intent = str(parsed.get("intent", "")).strip().lower()
+    if intent not in ROUTER_INTENTS:
+        return None, 0.0
+
+    try:
+        confidence = float(parsed.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    return intent, confidence
 
 
 def _owner_to_agent(owner: str) -> str:
@@ -363,6 +459,417 @@ def _answer_question_directly(state: GraphState) -> str:
 
 
 # ---------------------------------------------------------------------------
+# NODE: router
+# ---------------------------------------------------------------------------
+
+def router_node(state: GraphState) -> dict:
+    """Intent gate before any planning/coding workflow starts."""
+    emit_node_start("planner", "Router", item_desc=state.user_request[:100])
+    emit_status("planner", "Classifying request intent", **_progress_meta(state, "planning"))
+
+    heuristic_intent = _heuristic_router_intent(state.user_request)
+    if heuristic_intent in ROUTER_INTENTS:
+        emit_node_end("planner", "Router", f"Heuristic intent: {heuristic_intent}")
+        return {"input_intent": heuristic_intent}
+
+    router_prompt = (
+        "Classify the user request into ONE intent only.\n"
+        "Allowed intents: code, status, research, resume.\n"
+        "Return STRICT JSON only, no markdown:\n"
+        '{"intent":"code|status|research|resume","confidence":0.0}\n\n'
+        f"User request:\n{state.user_request}\n"
+    )
+    llm_result = _invoke_agent("planner", [HumanMessage(content=router_prompt)])
+    llm_intent, confidence = _parse_router_json(llm_result)
+
+    if llm_intent:
+        emit_node_end("planner", "Router", f"LLM intent: {llm_intent} (confidence={confidence:.2f})")
+        return {"input_intent": llm_intent}
+
+    fallback = "code" if is_programming_request(state.user_request or "") else "research"
+    emit_status(
+        "planner",
+        f"Router fallback intent: {fallback} (LLM output not parseable JSON)",
+        **_progress_meta(state, "planning"),
+    )
+    emit_node_end("planner", "Router", f"Fallback intent: {fallback}")
+    return {"input_intent": fallback}
+
+
+# ---------------------------------------------------------------------------
+# NODE: context_loader (placeholder for Patch 02)
+# ---------------------------------------------------------------------------
+
+def context_loader_node(state: GraphState) -> dict:
+    """Load repository context before planner execution."""
+    emit_node_start("planner", "Context Loader", item_desc=state.user_request[:100])
+    if state.context_loaded:
+        emit_status("planner", "Context already loaded; skipping re-analysis", **_progress_meta(state, "planning"))
+        emit_node_end("planner", "Context Loader", "Skipped (already loaded)")
+        return {"input_intent": "code", "context_loaded": True}
+
+    settings = get_settings()
+    repo_root = (state.repo_root or settings.target_repo_path or "").strip()
+    if not repo_root:
+        emit_error("planner", "Context loader could not determine repository path.")
+        emit_node_end("planner", "Context Loader", "Failed (repo path missing)")
+        return {
+            "repo_facts": {"error": "Missing repository path", "fallback": True},
+            "context_loaded": False,
+            "stop_reason": "context_repo_path_missing",
+            "phase": WorkflowPhase.STOPPED,
+        }
+
+    repo_path = Path(repo_root).resolve()
+    if not repo_path.exists() or not repo_path.is_dir():
+        emit_error("planner", f"Context loader repository path invalid: {repo_path}")
+        emit_node_end("planner", "Context Loader", "Failed (repo path invalid)")
+        return {
+            "repo_facts": {"error": f"Invalid repository path: {repo_path}", "fallback": True},
+            "context_loaded": False,
+            "stop_reason": "context_repo_path_invalid",
+            "phase": WorkflowPhase.STOPPED,
+        }
+
+    emit_status("planner", "Reading repository documentation and structure", **_progress_meta(state, "planning"))
+
+    doc_files = [
+        "docs/AGENT.md",
+        "AGENT.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CONTRIBUTING.md",
+        "CONTRIBUTING.rst",
+        "README.md",
+    ]
+
+    max_chars = max(1000, int(settings.max_output_chars))
+    instruction_chunks: list[str] = []
+    for rel_path in doc_files:
+        file_path = repo_path / rel_path
+        if not file_path.exists() or not file_path.is_file():
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            trimmed = _truncate_context_text(content, limit=min(max_chars, 8000))
+            instruction_chunks.append(f"=== {rel_path} ===\n{trimmed}")
+        except Exception as exc:
+            logger.warning("Could not read context file %s: %s", rel_path, exc)
+
+    agent_instructions = "\n\n".join(instruction_chunks).strip()
+    context_listing = _build_context_listing(repo_path, max_depth=2, max_entries=350)
+
+    repo_facts: dict = {}
+    try:
+        from app.agents.analyzer import CodebaseAnalyzer
+
+        analyzer = CodebaseAnalyzer(repo_path)
+        repo_context = analyzer.analyze_repository()
+        repo_facts = repo_context.to_dict()
+    except Exception as exc:
+        logger.warning("Structured repository analysis failed; falling back to heuristics: %s", exc)
+        repo_facts = {"error": str(exc), "fallback": True}
+
+    if repo_facts.get("fallback"):
+        repo_facts = _heuristic_analysis(repo_path)
+
+    summary = _format_context_summary(repo_facts)
+    emit_status(
+        "planner",
+        f"Repository context loaded: {summary}",
+        **_progress_meta(state, "planning"),
+    )
+    emit_node_end("planner", "Context Loader", "Repository context ready for planner")
+
+    return {
+        "input_intent": "code",
+        "agent_instructions": agent_instructions,
+        "repo_facts": repo_facts,
+        "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
+        "context_loaded": True,
+    }
+
+
+def _truncate_context_text(text: str, limit: int = 8000) -> str:
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    tail = limit - head
+    return text[:head] + f"\n\n... [truncated {len(text) - limit} chars] ...\n\n" + text[-tail:]
+
+
+def _build_context_listing(repo_path: Path, max_depth: int = 2, max_entries: int = 300) -> str:
+    """Build a compact repo listing without using mutation-capable tools."""
+    lines: list[str] = []
+    skipped_dirs = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules"}
+
+    def _walk(path: Path, depth: int, prefix: str = "") -> None:
+        if len(lines) >= max_entries or depth > max_depth:
+            return
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except Exception:
+            return
+        for entry in entries:
+            if len(lines) >= max_entries:
+                return
+            if entry.name in skipped_dirs:
+                continue
+            if entry.name.startswith(".") and entry.name not in {".github", ".agents"}:
+                continue
+            if entry.is_dir():
+                lines.append(f"{prefix}{entry.name}/")
+                _walk(entry, depth + 1, prefix + "  ")
+            else:
+                lines.append(f"{prefix}{entry.name}")
+
+    _walk(repo_path, depth=0)
+    if len(lines) >= max_entries:
+        lines.append("... [listing truncated]")
+    return "\n".join(lines) if lines else "(empty)"
+
+
+def _heuristic_analysis(repo_path: Path) -> dict:
+    """Fallback file-based repository analysis."""
+    facts: dict = {}
+
+    if (repo_path / "pyproject.toml").exists() or (repo_path / "setup.py").exists():
+        facts["language"] = "python"
+        facts["package_manager"] = "poetry" if (repo_path / "poetry.lock").exists() else "pip"
+        if (repo_path / "pytest.ini").exists():
+            facts["test_framework"] = "pytest"
+            facts["test_command"] = "python -m pytest -q"
+        else:
+            facts["test_framework"] = "unittest"
+            facts["test_command"] = "python -m unittest discover"
+    elif (repo_path / "package.json").exists():
+        facts["language"] = "javascript"
+        facts["package_manager"] = "yarn" if (repo_path / "yarn.lock").exists() else "npm"
+        facts["test_command"] = "npm test"
+        try:
+            parsed = json.loads((repo_path / "package.json").read_text(encoding="utf-8"))
+            scripts = parsed.get("scripts", {})
+            if isinstance(scripts, dict):
+                facts["test_command"] = scripts.get("test", "npm test")
+        except Exception:
+            pass
+    else:
+        facts["language"] = "unknown"
+
+    if (repo_path / ".github" / "workflows").exists():
+        facts["ci_cd"] = "github_actions"
+    elif (repo_path / ".gitlab-ci.yml").exists():
+        facts["ci_cd"] = "gitlab_ci"
+
+    facts["has_docker"] = (repo_path / "Dockerfile").exists()
+    return facts
+
+
+def _format_context_summary(repo_facts: dict) -> str:
+    if not repo_facts:
+        return "no facts detected"
+    if repo_facts.get("error"):
+        return f"analysis failed ({repo_facts['error']})"
+
+    lines: list[str] = []
+    tech_stack = repo_facts.get("tech_stack")
+    if isinstance(tech_stack, dict):
+        language = tech_stack.get("language", "unknown")
+        framework = tech_stack.get("framework")
+        lines.append(f"language={language}")
+        if framework:
+            lines.append(f"framework={framework}")
+    elif repo_facts.get("language"):
+        lines.append(f"language={repo_facts['language']}")
+
+    test_framework = repo_facts.get("test_framework")
+    if isinstance(test_framework, dict):
+        if test_framework.get("name"):
+            lines.append(f"tests={test_framework['name']}")
+        if test_framework.get("unit_test_command"):
+            lines.append(f"test_cmd={test_framework['unit_test_command']}")
+    elif isinstance(test_framework, str):
+        lines.append(f"tests={test_framework}")
+    elif repo_facts.get("test_command"):
+        lines.append(f"test_cmd={repo_facts['test_command']}")
+
+    conventions = repo_facts.get("conventions")
+    if isinstance(conventions, dict):
+        if conventions.get("linting_tool"):
+            lines.append(f"lint={conventions['linting_tool']}")
+        if conventions.get("formatting_tool"):
+            lines.append(f"fmt={conventions['formatting_tool']}")
+
+    ci_cd_setup = repo_facts.get("ci_cd_setup")
+    if isinstance(ci_cd_setup, dict) and ci_cd_setup.get("platform"):
+        lines.append(f"ci={ci_cd_setup['platform']}")
+    elif repo_facts.get("ci_cd"):
+        lines.append(f"ci={repo_facts['ci_cd']}")
+
+    return ", ".join(lines) if lines else "context loaded"
+
+
+def _extract_test_command(repo_facts: dict) -> str | None:
+    test_framework = repo_facts.get("test_framework")
+    if isinstance(test_framework, dict):
+        cmd = test_framework.get("unit_test_command")
+        if isinstance(cmd, str) and cmd.strip():
+            return cmd.strip()
+    cmd = repo_facts.get("test_command")
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd.strip()
+    return None
+
+
+def _format_repo_context_for_prompt(repo_facts: dict) -> str:
+    """Format structured context so planner/coder can follow repo conventions."""
+    if not repo_facts:
+        return "=== REPOSITORY CONTEXT ===\nNo repository facts detected."
+
+    lines = ["=== REPOSITORY CONTEXT ===", "You MUST follow these detected conventions.", ""]
+
+    tech_stack = repo_facts.get("tech_stack")
+    if isinstance(tech_stack, dict):
+        lines.append(f"Language: {tech_stack.get('language', 'unknown')}")
+        framework = tech_stack.get("framework")
+        if framework:
+            version = tech_stack.get("framework_version")
+            lines.append(f"Framework: {framework}{f' {version}' if version else ''}")
+        manager = tech_stack.get("package_manager")
+        if manager:
+            lines.append(f"Package Manager: {manager}")
+    elif repo_facts.get("language"):
+        lines.append(f"Language: {repo_facts.get('language', 'unknown')}")
+
+    test_framework = repo_facts.get("test_framework")
+    test_command = _extract_test_command(repo_facts)
+    if isinstance(test_framework, dict):
+        lines.append("")
+        lines.append(f"Test Framework: {test_framework.get('name', 'unknown')}")
+    elif isinstance(test_framework, str):
+        lines.append("")
+        lines.append(f"Test Framework: {test_framework}")
+    if test_command:
+        lines.append(f"Test Command: {test_command}")
+        lines.append("CRITICAL: Prefer this test command for verification.")
+
+    conventions = repo_facts.get("conventions")
+    if isinstance(conventions, dict):
+        lines.append("")
+        lines.append("Code Style:")
+        if conventions.get("linting_tool"):
+            lines.append(f"- Linting: {conventions['linting_tool']}")
+        if conventions.get("formatting_tool"):
+            lines.append(f"- Formatting: {conventions['formatting_tool']}")
+        if conventions.get("max_line_length"):
+            lines.append(f"- Max line length: {conventions['max_line_length']}")
+        if conventions.get("function_naming"):
+            lines.append(f"- Function naming: {conventions['function_naming']}")
+        if conventions.get("class_naming"):
+            lines.append(f"- Class naming: {conventions['class_naming']}")
+
+    architecture = repo_facts.get("architecture")
+    if isinstance(architecture, dict):
+        lines.append("")
+        lines.append(f"Architecture: {architecture.get('type', 'unknown')}")
+        layers = architecture.get("layers")
+        if isinstance(layers, list) and layers:
+            lines.append(f"Layers: {', '.join(str(layer) for layer in layers)}")
+
+    ci_cd_setup = repo_facts.get("ci_cd_setup")
+    if isinstance(ci_cd_setup, dict) and ci_cd_setup.get("platform"):
+        lines.append("")
+        lines.append(f"CI/CD: {ci_cd_setup['platform']}")
+        lines.append("Be careful with CI/CD changes.")
+    elif repo_facts.get("ci_cd"):
+        lines.append("")
+        lines.append(f"CI/CD: {repo_facts.get('ci_cd')}")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# NODE: status / research / resume (minimal non-coding branches)
+# ---------------------------------------------------------------------------
+
+def status_node(state: GraphState) -> dict:
+    """Non-coding status response branch (no write/git tools)."""
+    emit_node_start("planner", "Status", item_desc=state.user_request[:100])
+    summary = state.get_progress_summary()
+    message = f"Workflow status:\n{summary}"
+    emit_status("planner", "Status request handled without coding", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Status", "Status response prepared")
+    return {
+        "planner_response": message,
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "status_answered",
+        "input_intent": "status",
+    }
+
+
+def research_node(state: GraphState) -> dict:
+    """Research branch without repository mutation tools."""
+    emit_node_start("planner", "Research", item_desc=state.user_request[:100])
+    prompt = (
+        "You are a research assistant for a software workflow.\n"
+        "Answer the user's request in analysis mode only.\n"
+        "Do not propose or perform code/file/git changes.\n\n"
+        f"User request:\n{state.user_request}\n"
+    )
+    answer = _invoke_agent("planner", [HumanMessage(content=prompt)])
+    emit_status("planner", "Research request handled without coding", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Research", "Research response prepared")
+    return {
+        "planner_response": answer,
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "research_answered",
+        "input_intent": "research",
+    }
+
+
+def resume_node(state: GraphState) -> dict:
+    """Resume branch using checkpoints first, then TODO fallback."""
+    emit_node_start("planner", "Resume", item_desc=state.user_request[:100])
+
+    restored = checkpoint_manager.load_checkpoint(repo_root=state.repo_root)
+    if restored is not None:
+        payload = restored.model_dump()
+        payload["input_intent"] = "resume"
+        payload["resumed_from_checkpoint"] = True
+
+        pending = payload.get("pending_approval", {})
+        approved = isinstance(pending, dict) and bool(pending.get("approved"))
+        if payload.get("needs_human_approval") and not approved:
+            payload["phase"] = WorkflowPhase.WAITING_FOR_APPROVAL
+            payload["stop_reason"] = "human_approval_required"
+            emit_node_end("planner", "Resume", "Checkpoint restored; awaiting human approval")
+        elif approved:
+            payload["needs_human_approval"] = False
+            payload["phase"] = WorkflowPhase.COMMITTING
+            payload["stop_reason"] = ""
+            emit_node_end("planner", "Resume", "Checkpoint restored; approval detected, resuming commit")
+        else:
+            emit_node_end("planner", "Resume", "Checkpoint restored")
+        return payload
+
+    resumed = _resume_from_saved_todo(state)
+    if resumed is not None:
+        resumed["input_intent"] = "resume"
+        resumed["resumed_from_checkpoint"] = False
+        emit_node_end("planner", "Resume", "Resumed workflow from tasks/todo.md")
+        return resumed
+
+    emit_status("planner", "No resumable TODO list found.", **_progress_meta(state, "complete"))
+    emit_node_end("planner", "Resume", "Nothing to resume")
+    return {
+        "planner_response": "No resumable TODO items found in tasks/todo.md.",
+        "phase": WorkflowPhase.COMPLETE,
+        "stop_reason": "resume_not_found",
+        "input_intent": "resume",
+    }
+
+
+# ---------------------------------------------------------------------------
 # NODE: planner_plan
 # ---------------------------------------------------------------------------
 
@@ -371,7 +878,9 @@ def planner_plan_node(state: GraphState) -> dict:
     emit_node_start("planner", "Planning", item_desc=state.user_request[:100])
     emit_status("planner", f"Analyzing request: {state.user_request[:80]}...", **_progress_meta(state, "planning"))
 
-    intent = _classify_request_intent(state.user_request)
+    intent = (state.input_intent or "").strip().lower()
+    if intent not in ROUTER_INTENTS and intent not in {"question_only", "resume_workflow", "new_task"}:
+        intent = _classify_request_intent(state.user_request)
     if intent == "question_only":
         answer = _answer_question_directly(state)
         emit_status(
@@ -390,7 +899,7 @@ def planner_plan_node(state: GraphState) -> dict:
             "stop_reason": "question_answered",
         }
 
-    if intent == "resume_workflow":
+    if intent in {"resume_workflow", "resume"}:
         resumed = _resume_from_saved_todo(state)
         if resumed is not None:
             resumed["input_intent"] = intent
@@ -441,6 +950,22 @@ def planner_plan_node(state: GraphState) -> dict:
         "Routing history:",
         history_summary(state.repo_root),
     ]
+
+    if state.context_loaded:
+        context_parts.append("Repository context has been preloaded.")
+    if state.repo_facts:
+        context_parts.append(_format_repo_context_for_prompt(state.repo_facts))
+        context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
+    if state.context_listing:
+        context_parts.append(
+            "Repository listing (depth<=2):\n"
+            + _truncate_context_text(state.context_listing, limit=4000)
+        )
+    if state.agent_instructions:
+        context_parts.append(
+            "Repository instructions (AGENT/README snippets):\n"
+            + _truncate_context_text(state.agent_instructions, limit=5000)
+        )
 
     memory_ctx = load_all_memory()
     if memory_ctx:
@@ -528,8 +1053,7 @@ def planner_plan_node(state: GraphState) -> dict:
     else:
         active_coder, active_reviewer = _assign_coder_pair(0)
 
-    emit_node_end("planner", "Planning", f"Plan ready - starting with item 1 -> {_coder_label(active_coder)}")
-    return {
+    updates = {
         "input_intent": intent,
         "todo_items": items if items else state.todo_items,
         "current_item_index": 0 if items else state.current_item_index,
@@ -539,6 +1063,10 @@ def planner_plan_node(state: GraphState) -> dict:
         "active_coder": active_coder,
         "active_reviewer": active_reviewer,
     }
+    _save_checkpoint_snapshot(state, updates, "plan_complete")
+
+    emit_node_end("planner", "Planning", f"Plan ready - starting with item 1 -> {_coder_label(active_coder)}")
+    return updates
 
 
 def _compress_memory_file(key: str) -> None:
@@ -689,11 +1217,26 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(f"**Peer Review Feedback (REWORK)**:\n{state.peer_review_notes}")
     if item.test_report:
         prompt_parts.append(f"**Test Report (previous)**:\n{item.test_report}")
+    if state.repo_facts:
+        prompt_parts.append(_format_repo_context_for_prompt(state.repo_facts))
+    if state.agent_instructions:
+        prompt_parts.append(
+            "**Repository Documentation (excerpt)**:\n"
+            + _truncate_context_text(state.agent_instructions, limit=3000)
+        )
+
+    preferred_test_cmd = _extract_test_command(state.repo_facts)
 
     prompt_parts.append(
         "\nImplement this task. Use tools to read the codebase, make changes, "
         "add tests where needed, and update docs. Keep diffs minimal.\n"
-        "Follow the coding style and architecture decisions from shared memory."
+        "Follow the coding style and architecture decisions from shared memory.\n\n"
+        "CRITICAL WORKFLOW:\n"
+        "1. Search for similar code first via `search_in_repo`.\n"
+        "2. Read existing implementations with `read_file` before editing.\n"
+        "3. Prefer minimal edits and keep architecture patterns consistent.\n"
+        "4. Add or update tests with every behavior change.\n"
+        f"5. Verify using preferred command: `{preferred_test_cmd or 'python -m pytest -q'}`."
     )
 
     tools = DOCUMENTER_TOOLS if active == "documenter" else CODER_TOOLS
@@ -703,11 +1246,13 @@ def coder_node(state: GraphState) -> dict:
     with suppress(Exception):
         _write_todo_file(state.todo_items, state.user_request)
 
-    return {
+    updates = {
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
         "total_iterations": state.total_iterations + 1,
     }
+    _save_checkpoint_snapshot(state, updates, "code_complete")
+    return updates
 
 
 # ---------------------------------------------------------------------------
@@ -1015,10 +1560,13 @@ def tester_node(state: GraphState) -> dict:
 
     emit_node_end("tester", "Testing", f"Verdict: {verdict}")
 
-    return {
+    updates = {
         "last_test_result": result,
         "phase": WorkflowPhase.DECIDING if verdict == "PASS" else WorkflowPhase.CODING,
     }
+    if verdict == "PASS":
+        _save_checkpoint_snapshot(state, updates, "test_pass")
+    return updates
 
 
 # ---------------------------------------------------------------------------
@@ -1058,6 +1606,107 @@ def planner_decide_node(state: GraphState) -> dict:
     }
 
 
+def _count_lines_in_numstat(diff_numstat: str) -> int:
+    total = 0
+    for line in diff_numstat.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("["):
+            continue
+        parts = clean.split("\t")
+        if len(parts) < 3:
+            continue
+        try:
+            added = 0 if parts[0] == "-" else int(parts[0])
+            deleted = 0 if parts[1] == "-" else int(parts[1])
+        except ValueError:
+            continue
+        total += added + deleted
+    return total
+
+
+def _parse_changed_files_from_status(porcelain_status: str) -> tuple[list[str], list[str]]:
+    changed: list[str] = []
+    deleted: list[str] = []
+    for line in porcelain_status.splitlines():
+        clean = line.rstrip()
+        if len(clean) < 4 or clean.startswith("["):
+            continue
+        status = clean[:2]
+        file_path = clean[3:].strip()
+        if not file_path:
+            continue
+        changed.append(file_path)
+        if "D" in status:
+            deleted.append(file_path)
+    return changed, deleted
+
+
+def human_gate_node(state: GraphState) -> dict:
+    """Pause for human approval before commit and risky operations."""
+    emit_node_start("planner", "Human Gate", item_desc=state.user_request[:100])
+    emit_status("planner", "Evaluating whether human approval is required", **_progress_meta(state, "reviewing"))
+
+    pending = state.pending_approval or {}
+    if pending.get("approved"):
+        emit_node_end("planner", "Human Gate", "Approval already granted")
+        return {"needs_human_approval": False, "phase": WorkflowPhase.COMMITTING, "stop_reason": ""}
+
+    if state.needs_human_approval and not pending.get("approved"):
+        emit_node_end("planner", "Human Gate", "Still waiting for human approval")
+        return {"phase": WorkflowPhase.WAITING_FOR_APPROVAL, "stop_reason": "human_approval_required"}
+
+    approval_triggers = [{"type": "commit", "reason": "Commit requires human approval"}]
+
+    status_raw = git_command.invoke({"command": "git status --porcelain"})
+    changed_files, deleted_files = _parse_changed_files_from_status(status_raw)
+    for file_path in deleted_files:
+        approval_triggers.append({"type": "file_deletion", "reason": f"File deletion: {file_path}"})
+
+    ci_markers = (".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/")
+    for file_path in changed_files:
+        if any(marker in file_path for marker in ci_markers):
+            approval_triggers.append({"type": "ci_config_change", "reason": f"CI/CD change: {file_path}"})
+
+    diff_numstat = git_command.invoke({"command": "git diff --numstat"})
+    lines_changed = _count_lines_in_numstat(diff_numstat)
+    if lines_changed > 400:
+        approval_triggers.append({"type": "large_diff", "reason": f"Large diff: {lines_changed} changed lines"})
+
+    diff_preview = git_command.invoke({"command": "git diff"})
+    if len(diff_preview) > 5000:
+        diff_preview = diff_preview[:5000] + "\n\n... (truncated)"
+
+    payload = {
+        "type": "commit",
+        "triggers": approval_triggers,
+        "summary": f"{len(changed_files)} files changed, {lines_changed} changed lines",
+        "files": changed_files,
+        "git_status": status_raw,
+        "diff_preview": diff_preview,
+        "approved": False,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    history = list(state.approval_history)
+    history.append({"timestamp": payload["timestamp"], "approved": None, "triggers": approval_triggers})
+
+    updates = {
+        "needs_human_approval": True,
+        "pending_approval": payload,
+        "approval_history": history,
+        "phase": WorkflowPhase.WAITING_FOR_APPROVAL,
+        "stop_reason": "human_approval_required",
+    }
+    _save_checkpoint_snapshot(state, updates, "await_approval")
+
+    emit_status(
+        "planner",
+        "Human approval required before commit",
+        **_progress_meta(state, "waiting_for_approval"),
+    )
+    emit_node_end("planner", "Human Gate", "Paused for human approval")
+    return updates
+
+
 def _extract_commit_message(peer_notes: str, planner_notes: str, fallback_desc: str) -> str:
     for source in [planner_notes, peer_notes]:
         for line in source.split("\n"):
@@ -1088,6 +1737,7 @@ def committer_node(state: GraphState) -> dict:
     result = git_commit_and_push.invoke({"message": item.commit_message, "push": True})
     emit_commit(item.commit_message, item_id=item.id)
     logger.info("commit result: %s", result[:200])
+    _save_checkpoint_snapshot(state, {"phase": WorkflowPhase.COMMITTING}, "commit_success")
 
     next_index = state.current_item_index + 1
     has_more = next_index < len(state.todo_items)
@@ -1109,6 +1759,9 @@ def committer_node(state: GraphState) -> dict:
             "active_reviewer": next_reviewer,
             "peer_review_notes": "",
             "peer_review_verdict": "",
+            "needs_human_approval": False,
+            "pending_approval": {},
+            "stop_reason": "",
         }
     else:
         # Log final memory stats
@@ -1124,5 +1777,9 @@ def committer_node(state: GraphState) -> dict:
             f"🎉 All {len(state.todo_items)} items completed! Branch: {state.branch_name}",
             **_progress_meta(state, "complete"),
         )
-        return {"phase": WorkflowPhase.COMPLETE}
-
+        return {
+            "phase": WorkflowPhase.COMPLETE,
+            "needs_human_approval": False,
+            "pending_approval": {},
+            "stop_reason": "",
+        }

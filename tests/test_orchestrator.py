@@ -32,6 +32,24 @@ class TestCoderAssignment:
 
 
 class TestRouting:
+    def test_route_after_router_code_goes_to_context(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="code", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "context"
+
+    def test_route_after_router_status(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="status", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "status"
+
+    def test_route_after_router_unknown_defaults_to_context(self):
+        from app.core.orchestrator import route_after_router
+
+        state = GraphState(input_intent="unknown", phase=WorkflowPhase.PLANNING)
+        assert route_after_router(state) == "context"
+
     def test_route_after_plan_to_coder(self):
         from app.core.orchestrator import _route_after_plan
         state = GraphState(
@@ -99,6 +117,21 @@ class TestRouting:
         state = GraphState(phase=WorkflowPhase.CODING)
         assert _route_after_tester(state) == "coder"
 
+    def test_route_after_decide_goes_to_human_gate(self):
+        from app.core.orchestrator import _route_after_decide
+        state = GraphState(phase=WorkflowPhase.COMMITTING)
+        assert _route_after_decide(state) == "human_gate"
+
+    def test_route_after_human_gate_stops_when_approval_needed(self):
+        from app.core.orchestrator import _route_after_human_gate
+        state = GraphState(phase=WorkflowPhase.WAITING_FOR_APPROVAL, needs_human_approval=True)
+        assert _route_after_human_gate(state) == "stopped"
+
+    def test_route_after_human_gate_to_commit(self):
+        from app.core.orchestrator import _route_after_human_gate
+        state = GraphState(phase=WorkflowPhase.COMMITTING, needs_human_approval=False)
+        assert _route_after_human_gate(state) == "commit"
+
     def test_route_after_commit_more_items(self):
         from app.core.orchestrator import _route_after_commit
         state = GraphState(phase=WorkflowPhase.CODING)
@@ -115,6 +148,14 @@ class TestGraphBuild:
         from app.core.orchestrator import compile_graph
         compiled = compile_graph()
         assert compiled is not None
+
+    def test_graph_has_router_and_context_nodes(self):
+        from app.core.orchestrator import build_graph
+
+        graph = build_graph()
+        assert "router" in graph.nodes
+        assert "context" in graph.nodes
+        assert "human_gate" in graph.nodes
 
     def test_graph_has_peer_review_node(self):
         from app.core.orchestrator import build_graph

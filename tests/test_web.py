@@ -60,6 +60,14 @@ class TestTaskEndpoint:
         assert "hello world" in data["task"]
 
 
+class TestApprovalEndpoint:
+    def test_approve_without_pending_returns_error(self, client):
+        resp = client.post("/api/approve", json={"approved": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "error" in data
+
+
 class TestUI:
     def test_serves_html(self, client):
         resp = client.get("/")

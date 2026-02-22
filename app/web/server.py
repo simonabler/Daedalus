@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import WorkflowEvent, get_history, set_event_loop, subscribe_async
 from app.core.logging import get_logger
@@ -46,6 +46,10 @@ class StatusResponse(BaseModel):
     error: str
     items_total: int
     items_done: int
+
+
+class ApprovalRequest(BaseModel):
+    approved: bool = True
 
 
 # ── WebSocket broadcast (wired to event bus) ─────────────────────────────
@@ -146,10 +150,8 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown: signal workflow to stop, then cancel the worker
     request_shutdown()
     worker.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await worker
-    except asyncio.CancelledError:
-        pass
     logger.info("Lifespan cleanup complete")
 
 
@@ -182,6 +184,45 @@ async def get_status():
 async def get_events(limit: int = 200):
     """Return recent workflow events."""
     return {"events": get_history(limit)}
+
+
+@app.post("/api/approve")
+async def approve_pending_action(req: ApprovalRequest):
+    """Approve or reject a pending human-gate action."""
+    global _current_state
+
+    if not isinstance(_current_state, GraphState):
+        return {"error": "No pending approval"}
+
+    if not _current_state.needs_human_approval:
+        return {"error": "No pending approval"}
+
+    timestamp = datetime.now(UTC).isoformat()
+    entry = {
+        "timestamp": timestamp,
+        "approved": req.approved,
+        "pending_type": (_current_state.pending_approval or {}).get("type", "unknown"),
+    }
+    _current_state.approval_history.append(entry)
+
+    if req.approved:
+        _current_state.pending_approval["approved"] = True
+        _current_state.needs_human_approval = False
+        _current_state.stop_reason = ""
+        repo_root = str(_current_state.repo_root or "")
+        checkpoint_manager.mark_latest_approval(True, repo_root=repo_root)
+
+        if _task_queue is not None:
+            await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
+
+        return {"status": "approved", "message": "Action approved, resume queued."}
+
+    _current_state.pending_approval["approved"] = False
+    _current_state.needs_human_approval = False
+    _current_state.phase = WorkflowPhase.STOPPED
+    _current_state.stop_reason = "user_rejected"
+    checkpoint_manager.mark_latest_approval(False, repo_root=str(_current_state.repo_root or ""))
+    return {"status": "rejected", "message": "Action rejected, workflow stopped."}
 
 
 @app.websocket("/ws")

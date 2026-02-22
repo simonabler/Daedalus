@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -40,12 +40,15 @@ class TodoItem(BaseModel):
 
 class WorkflowPhase(StrEnum):
     IDLE = "idle"
+    ROUTING = "routing"
+    LOADING_CONTEXT = "loading_context"
     PLANNING = "planning"
     CODING = "coding"
     PEER_REVIEWING = "peer_reviewing"    # cross-coder review
     REVIEWING = "reviewing"               # planner final gate review
     TESTING = "testing"
     DECIDING = "deciding"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
     COMMITTING = "committing"
     COMPLETE = "complete"
     STOPPED = "stopped"
@@ -63,6 +66,16 @@ class GraphState(BaseModel):
     execution_platform: str = ""
     input_intent: str = ""
     planner_response: str = ""
+    agent_instructions: str = ""
+    repo_facts: dict[str, Any] = Field(default_factory=dict)
+    context_listing: str = ""
+    context_loaded: bool = False
+    needs_human_approval: bool = False
+    pending_approval: dict[str, Any] = Field(default_factory=dict)
+    approval_history: list[dict[str, Any]] = Field(default_factory=list)
+    state_checkpoint_id: str | None = None
+    last_checkpoint_path: str | None = None
+    resumed_from_checkpoint: bool = False
 
     # ── Plan & progress ───────────────────────────────────────────────
     todo_items: list[TodoItem] = Field(default_factory=list)
@@ -112,3 +125,18 @@ class GraphState(BaseModel):
             f"Current: {current.description if current else 'none'} | "
             f"Branch: {self.branch_name or 'not set'}"
         )
+
+    @property
+    def checkpoint_id(self) -> str | None:
+        return self.state_checkpoint_id
+
+    @checkpoint_id.setter
+    def checkpoint_id(self, value: str | None) -> None:
+        self.state_checkpoint_id = value
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GraphState:
+        """Deserialize state payloads from checkpoints or persisted snapshots."""
+        if "checkpoint_id" in data and "state_checkpoint_id" not in data:
+            data = {**data, "state_checkpoint_id": data["checkpoint_id"]}
+        return cls(**data)
