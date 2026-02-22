@@ -12,8 +12,16 @@
 
 </div>
 
+A production-ready, multi-agent AI coding system that autonomously plans, implements, tests, and commits code changes with intelligent context awareness, human approval gates, and full checkpoint/resume capabilities.
 
-A local, multi-agent AI coding system that autonomously plans, implements, tests, documents, and commits code changes to Git repositories.
+## ✨ What's New in v2.0
+
+🎯 **Intelligent Intent Routing** - Distinguishes between coding tasks, status queries, and research requests  
+🔍 **Repository Context Awareness** - Analyzes tech stack, test frameworks, and code conventions before coding  
+✅ **Human Approval Gates** - Requires approval before commits and risky operations  
+🔄 **Checkpoint & Resume** - Never lose progress; resume from any interruption  
+🔎 **Safe Code Search** - Search repository patterns without shell execution  
+📚 **Context-Aware Agents** - Planner and coders know your project structure and conventions  
 
 ## Architecture
 
@@ -24,32 +32,99 @@ A local, multi-agent AI coding system that autonomously plans, implements, tests
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
-│                LANGGRAPH ORCHESTRATOR                       │
+│                INTELLIGENT ORCHESTRATOR                     │
 │                                                             │
-│  ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐   │
-│  │ Planner  │→ │Coder A  │→ │Peer Review│→ │  Planner   │   │
-│  │(GPT-4o-m)│  │(Claude) │  │by Coder B │  │  Review    │   │
-│  │          │  │         │  │(gpt-5.2)  │  │ (final ok) │   │
-│  └──────────┘  └─────────┘  └───────────┘  └─────┬──────┘   │
-│       │                                          │          │
-│       │       ┌─────────┐  ┌───────────┐         │          │
-│       │       │Coder B  │→ │Peer Review│─────────┘          │
-│       │       │(gpt-5.2)│  │by Coder A │                    │
-│       │       │         │  │(Claude)   │                    │
-│       │       └─────────┘  └───────────┘                    │
-│       │                                                     │
-│  ┌────▼─────┐  ┌──────────────────────┐                     │
-│  │ Tester   │→ │ Decide → Commit/Push │                     │
-│  │(Tools+LLM│  └──────────────────────┘                     │
-│  └──────────┘                                               │
+│  ┌──────────┐  ┌───────────────┐  ┌──────────┐             │
+│  │ Router   │→ │ Context Loader│→ │ Planner  │             │
+│  │(Intent)  │  │(Repo Analysis)│  │(GPT-4o-m)│             │
+│  └──────────┘  └───────────────┘  └──────────┘             │
+│       ├─ status → Status Node                              │
+│       ├─ research → Research Node (read-only)              │
+│       ├─ resume → Resume from Checkpoint                   │
+│       └─ code → (workflow below)                           │
+│                                                             │
+│  ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌────────────┐ │
+│  │ Planner  │→ │Coder A  │→ │Peer Review│→ │  Planner   │ │
+│  │(GPT-4o-m)│  │(Claude) │  │by Coder B │  │  Review    │ │
+│  │          │  │         │  │(gpt-5.2)  │  │ (final ok) │ │
+│  └──────────┘  └─────────┘  └───────────┘  └─────┬──────┘ │
+│       │                                          │        │
+│       │       ┌─────────┐  ┌───────────┐         │        │
+│       │       │Coder B  │→ │Peer Review│─────────┘        │
+│       │       │(gpt-5.2)│  │by Coder A │                  │
+│       │       │         │  │(Claude)   │                  │
+│       │       └─────────┘  └───────────┘                  │
+│       │                                                   │
+│  ┌────▼─────┐  ┌─────────────┐  ┌──────────────────────┐ │
+│  │ Tester   │→ │ Human Gate  │→ │ Commit & Checkpoint  │ │
+│  │(Tools+LLM│  │(Approval)   │  │                      │ │
+│  └──────────┘  └─────────────┘  └──────────────────────┘ │
 └────────────────────────┬────────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │                     SAFE TOOLS                              │
-│       Filesystem (sandboxed) · Shell (blocklist)            │
-│       Git (allow/block list) · Build/Test runners           │
+│  Filesystem (sandboxed) · Shell (blocklist) · Git (curated) │
+│  Search (no shell) · Build/Test · Context Analysis          │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## 🚀 Key Features
+
+### 🎯 Intelligent Request Routing
+
+Daedalus now understands different types of requests:
+
+- **Code Tasks** - Full workflow with planning, implementation, testing, and approval
+- **Status Queries** - Quick answers without modifying files ("What's the status?")
+- **Research Requests** - Read-only analysis ("Find all uses of X in the codebase")
+- **Resume Commands** - Continue from last checkpoint after interruption
+
+The router automatically classifies your intent and routes to the appropriate handler.
+
+### 🔍 Repository Context Awareness
+
+Before planning any code changes, Daedalus analyzes your repository:
+
+- **Tech Stack Detection** - Language, framework, package manager
+- **Test Framework Discovery** - pytest, jest, unittest, etc. with correct commands
+- **Code Conventions** - Linting tools, formatting rules, line length limits
+- **CI/CD Configuration** - GitHub Actions, GitLab CI, Jenkins awareness
+- **Project Structure** - Entry points, architecture patterns, dependencies
+
+This context is injected into all agent prompts, ensuring they use the correct tools and follow your conventions.
+
+### ✅ Human Approval Gates
+
+Never auto-commit without review. Daedalus pauses before:
+
+- **Every commit** - Always requires approval
+- **Large changes** - Diffs over 400 lines
+- **File deletions** - Any file removal operation
+- **CI/CD changes** - Modifications to workflow configs
+
+You receive a diff preview and can approve or reject before any changes are committed.
+
+### 🔄 Checkpoint & Resume
+
+Full crash recovery and task resumption:
+
+- Checkpoints saved after planning, coding, testing, and commits
+- Resume from last checkpoint with a simple "continue" command
+- Handles interruptions, crashes, and manual stops gracefully
+- State stored in `.daedalus/checkpoints/` directory
+
+### 🔎 Safe Code Search
+
+Search your codebase without shell commands:
+
+```python
+# Agents can use: search_in_repo("pattern", "*.py", max_hits=50)
+# Returns: path:line: matched_text
+```
+
+- Pure Python implementation (no shell execution)
+- Skips .git, node_modules, build artifacts automatically
+- Configurable file patterns and result limits
 
 ### Dual-Coder Peer Review Workflow
 
@@ -61,13 +136,16 @@ The system uses **two coders** that alternate and cross-review each other:
 This cross-review catches different classes of bugs — each model has different strengths and blind spots.
 
 ```
-Planner Plan
-    → Coder (A or B, alternating)
-        → Peer Review (by the OTHER coder)
-            → Planner Final Review
-                → Tester
-                    → Decide → Commit & Push
-                        → next item (alternate coder) or DONE
+Router (classify intent)
+    → Context Loader (analyze repo)
+        → Planner (create plan with context)
+            → Coder (A or B, alternating)
+                → Peer Review (by the OTHER coder)
+                    → Planner Final Review
+                        → Tester
+                            → Human Gate (approval required)
+                                → Commit & Checkpoint
+                                    → next item (alternate coder) or DONE
 
 On REWORK (peer review or planner review): → back to the original coder
 On TEST FAIL: → back to the original coder
@@ -78,17 +156,20 @@ On unexpected error: → STOP and re-plan
 
 | Role | Model | Responsibility |
 |------|-------|---------------|
-| **Planner** | GPT-4o-mini | Understands goals, creates plans, final review gate, manages tasks |
-| **Coder A** | Claude (Anthropic) | Implements even-numbered items, peer-reviews Coder B's work |
-| **Coder B** | gpt-5.2 (OpenAI) | Implements odd-numbered items, peer-reviews Coder A's work |
-| **Tester** | GPT-4o-mini + tools | Runs tests/linters/builds, verifies acceptance criteria |
+| **Router** | GPT-4o-mini | Classifies intent (code, status, research, resume) |
+| **Context Loader** | Filesystem + LLM | Analyzes repository structure and conventions |
+| **Planner** | GPT-4o-mini | Understands goals, creates context-aware plans, final review gate |
+| **Coder A** | Claude Sonnet 4 | Implements even-numbered items, peer-reviews Coder B's work |
+| **Coder B** | gpt-5.2 | Implements odd-numbered items, peer-reviews Coder A's work |
+| **Tester** | GPT-4o-mini + tools | Runs tests/linters/builds with detected commands |
+| **Human Gate** | Interactive | Approval checkpoint before commits |
 
 ## Quick Start
 
 ### 1. Clone and Install
 
 ```bash
-git clone <repo-url> daedalus
+git clone https://github.com/simonabler/Daedalus.git daedalus
 cd daedalus
 pip install -e .
 ```
@@ -125,11 +206,12 @@ This starts:
 - **Telegram bot** (if `TELEGRAM_BOT_TOKEN` is set)
 - **Background task processor**
 
-### 4. Submit a Task
+### 4. Submit Tasks
 
-**Via Web UI**: Open `http://127.0.0.1:8420` and type a task in the chat.
+#### Via Web UI
+Open `http://127.0.0.1:8420` and type a task in the chat.
 
-**Via Telegram**:
+#### Via Telegram
 ```
 /task Add user authentication with JWT tokens
 /status
@@ -137,31 +219,80 @@ This starts:
 /stop
 ```
 
-**Via API**:
+#### Via API
+
+**Code Task (Full Workflow):**
 ```bash
 curl -X POST http://127.0.0.1:8420/api/task \
   -H "Content-Type: application/json" \
-  -d '{"task": "Add user authentication with JWT tokens"}'
+  -d '{"task": "Add health check endpoint to /api/health"}'
 ```
 
-## Project Structure
+**Status Query (Quick Answer):**
+```bash
+curl -X POST http://127.0.0.1:8420/api/task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "What is the current status?"}'
+```
+
+**Research Request (Read-Only):**
+```bash
+curl -X POST http://127.0.0.1:8420/api/task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "Find all imports of GraphState in the codebase"}'
+```
+
+**Resume After Interruption:**
+```bash
+curl -X POST http://127.0.0.1:8420/api/task \
+  -H "Content-Type: application/json" \
+  -d '{"task": "continue"}'
+```
+
+### 5. Approve Changes
+
+When the workflow pauses for approval:
+
+```bash
+# Check pending approval
+curl http://127.0.0.1:8420/api/status
+
+# Approve and continue
+curl -X POST http://127.0.0.1:8420/api/approve \
+  -H "Content-Type: application/json" \
+  -d '{"approved": true}'
+
+# Reject and stop
+curl -X POST http://127.0.0.1:8420/api/approve \
+  -H "Content-Type: application/json" \
+  -d '{"approved": false}'
+```
+
+## 📁 Project Structure
 
 ```
 daedalus/
+├── AGENT.md                 # Instructions for AI agents working on this repo
 ├── app/
 │   ├── core/                # Domain logic
 │   │   ├── config.py        # Settings (pydantic-settings, .env)
 │   │   ├── logging.py       # Centralized logging
 │   │   ├── state.py         # GraphState, TodoItem, enums
 │   │   ├── nodes.py         # LangGraph node implementations
-│   │   └── orchestrator.py  # Graph builder and runner
+│   │   ├── orchestrator.py  # Graph builder and runner
+│   │   ├── repo_context.py  # Repository context data models
+│   │   ├── checkpoints.py   # Checkpoint save/load management
+│   │   ├── memory.py        # Shared agent memory system
+│   │   └── task_routing.py  # Intent classification helpers
 │   ├── agents/              # Agent definitions
 │   │   ├── models.py        # LLM factory (role → provider)
+│   │   ├── analyzer.py      # CodebaseAnalyzer for context
 │   │   └── prompts/         # System prompts per role
 │   ├── tools/               # Safe LangChain tools
 │   │   ├── filesystem.py    # Sandboxed file I/O
 │   │   ├── shell.py         # Blocklist-protected shell
 │   │   ├── git.py           # Allow/block git operations
+│   │   ├── search.py        # Safe repository search
 │   │   └── build.py         # Project-aware test/lint/build
 │   ├── web/                 # FastAPI web server
 │   │   ├── server.py        # REST + WebSocket endpoints
@@ -172,9 +303,19 @@ daedalus/
 ├── tasks/
 │   ├── todo.md              # Active plan + progress tracking
 │   └── lessons.md           # Learned rules from mistakes
+├── memory/                  # Shared agent memory
+│   ├── architecture-decisions.md
+│   ├── coding-style.md
+│   └── shared-insights.md
 ├── docs/
 │   └── definition-of-done.md
 ├── tests/                   # Pytest test suite
+│   ├── test_router.py       # Intent routing tests
+│   ├── test_context_loader.py
+│   ├── test_search.py
+│   ├── test_human_gate.py
+│   ├── test_checkpoints.py
+│   └── ...
 ├── logs/                    # Rotating log files
 ├── .env.example
 ├── pyproject.toml
@@ -182,7 +323,7 @@ daedalus/
 └── README.md
 ```
 
-## Safety
+## 🔒 Safety
 
 ### Filesystem
 - All file operations sandboxed to `TARGET_REPO_PATH`
@@ -197,24 +338,112 @@ daedalus/
 - Configurable timeout (`SHELL_TIMEOUT_SECONDS`)
 
 ### Git
-- Allowed: `status`, `diff`, `add`, `commit`, `checkout`, `push`, `pull`, `fetch`, `log`, `branch`, `show`, `stash`, `tag`
-- Blocked: `merge`, `rebase`, `reset --hard`, `clean -fd`, `push --force`
-- Commits only after Planner approval + tests pass
+- **Allowed**: `status`, `diff`, `add`, `commit`, `checkout`, `push`, `pull`, `fetch`, `log`, `branch`, `show`, `stash`, `tag`
+- **Blocked**: `merge`, `rebase`, `reset --hard`, `clean -fd`, `push --force`
+- **Human approval required** before all commits
 - Feature branches only — merge is forbidden (humans merge)
 
 ### Iteration Limits
 - Max iterations per TODO item: configurable (`MAX_ITERATIONS_PER_ITEM`, default 5)
 - Exceeding the limit → workflow stops and asks user for input
 
-## Git Workflow
+### Human Approval Gates
+- **Always triggers**: Before every commit
+- **Also triggers**: Large diffs (>400 lines), file deletions, CI/CD config changes
+- Provides diff preview, file list, and change summary
+- User can approve or reject via API
+
+## 🔄 Workflow Examples
+
+### Example 1: Code Task with Full Context
+
+```bash
+# Submit task
+POST /api/task
+{"task": "Add rate limiting to API endpoints"}
+```
+
+**What Happens:**
+1. **Router** classifies as "code" intent
+2. **Context Loader** analyzes repository:
+   - Detects FastAPI framework
+   - Finds pytest as test framework
+   - Extracts ruff + black for linting/formatting
+   - Notes GitHub Actions CI/CD
+3. **Planner** creates plan knowing:
+   - Use FastAPI middleware patterns
+   - Test with pytest
+   - Follow black formatting (88 char lines)
+   - Don't break GitHub Actions
+4. **Coder** implements using detected conventions
+5. **Tester** runs `pytest` (correct command from context!)
+6. **Human Gate** pauses with diff preview
+7. **You approve** → Commits with conventional commit message
+8. **Checkpoint saved** for future resume
+
+### Example 2: Status Query
+
+```bash
+POST /api/task
+{"task": "What's the current status?"}
+```
+
+**What Happens:**
+1. **Router** classifies as "status" intent
+2. **Status Node** returns immediate answer:
+   - Current phase
+   - Todo items (total, done, in progress)
+   - Last commit
+   - No files modified ✓
+
+### Example 3: Research Request
+
+```bash
+POST /api/task
+{"task": "Find all uses of 'search_in_repo' in the codebase"}
+```
+
+**What Happens:**
+1. **Router** classifies as "research" intent
+2. **Research Node** uses `search_in_repo` tool:
+   - Searches Python files
+   - Returns matches with line numbers
+   - No files modified ✓
+   - Read-only operation ✓
+
+### Example 4: Resume After Crash
+
+```bash
+# Daedalus crashes while implementing item 3 of 5
+# ... restart Daedalus ...
+
+POST /api/task
+{"task": "continue"}
+```
+
+**What Happens:**
+1. **Router** classifies as "resume" intent
+2. **Resume Node** loads `.daedalus/checkpoints/latest.json`:
+   - Restores plan (5 items)
+   - Restores current position (item 3)
+   - Restores repo context
+3. **Workflow continues** from item 3
+4. **No progress lost** ✓
+
+## 🔧 Git Workflow
 
 1. Agent creates a feature branch: `feature/<date>-<slug>`
 2. Works through TODO items one at a time
-3. Each completed item → Conventional Commit → push
+3. Each completed item:
+   - Tests pass
+   - Human approval obtained
+   - Conventional Commit created
+   - Checkpoint saved
+   - Branch pushed
 4. When all items done → "Ready for PR/Merge" status
 5. **Human** creates PR and merges
 
-## Task Management
+## 📋 Task Management
 
 ### tasks/todo.md
 ```markdown
@@ -230,31 +459,96 @@ daedalus/
 ### tasks/lessons.md
 ```markdown
 ### Rule 1: Always check for existing tests
-- Date: 2026-02-06
+- Date: 2026-02-21
 - Mistake: Overwrote existing test file
 - Rule: Read existing tests before writing new ones
 - Enforcement: Coder must list test files before editing
 ```
 
-## API Endpoints
+### .daedalus/checkpoints/
+```
+.daedalus/
+└── checkpoints/
+    ├── latest.json                    # Most recent state
+    ├── plan_complete_abc123.json      # After planning
+    ├── code_complete_def456.json      # After coding
+    └── test_pass_ghi789.json          # After tests pass
+```
+
+## 📡 API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/task` | Submit a new task |
-| GET | `/api/status` | Current workflow status |
+| POST | `/api/task` | Submit a new task (code, status, research, resume) |
+| POST | `/api/approve` | Approve or reject pending commit |
+| GET | `/api/status` | Current workflow status + pending approvals |
 | GET | `/api/logs` | Recent log entries |
 | WS | `/ws` | Real-time status + log stream |
 | GET | `/` | Web UI |
 
-## Running Tests
+### /api/task Request Body
 
-```bash
-pytest
-pytest -v                    # verbose
-pytest tests/test_shell.py   # specific test file
+```json
+{
+  "task": "Add health check endpoint"
+}
 ```
 
-## Configuration Reference
+**Intent Classification:**
+- Contains "add", "fix", "implement" → **code** (full workflow)
+- Contains "status", "what's", "show" → **status** (quick answer)
+- Contains "find", "search", "analyze" → **research** (read-only)
+- Contains "continue", "resume" → **resume** (load checkpoint)
+
+### /api/approve Request Body
+
+```json
+{
+  "approved": true
+}
+```
+
+### /api/status Response
+
+```json
+{
+  "phase": "waiting_for_approval",
+  "needs_human_approval": true,
+  "pending_approval": {
+    "type": "commit",
+    "summary": "3 files changed, 45 insertions(+), 12 deletions(-)",
+    "files": ["app/core/nodes.py", "tests/test_nodes.py", "README.md"],
+    "diff_preview": "diff --git a/app/core/nodes.py ...",
+    "triggers": [
+      {"type": "commit", "reason": "Commit requires approval"},
+      {"type": "large_diff", "reason": "Large diff: 57 lines changed"}
+    ]
+  },
+  "todo_items": [...],
+  "current_item_index": 2
+}
+```
+
+## 🧪 Running Tests
+
+```bash
+# All tests
+pytest
+
+# Verbose output
+pytest -v
+
+# Specific test file
+pytest tests/test_router.py
+
+# With coverage
+pytest --cov=app tests/
+
+# New feature tests
+pytest tests/test_router.py tests/test_context_loader.py tests/test_search.py tests/test_human_gate.py tests/test_checkpoints.py
+```
+
+## ⚙️ Configuration Reference
 
 See `.env.example` for all available settings. Key options:
 
@@ -265,12 +559,67 @@ See `.env.example` for all available settings. Key options:
 | `TARGET_REPO_PATH` | (required) | Path to target Git repo |
 | `CODER_A_MODEL` | `claude-sonnet-4-20250514` | Model for Coder A |
 | `CODER_B_MODEL` | `gpt-5.2` | Model for Coder B |
+| `PLANNER_MODEL` | `gpt-4o-mini` | Model for Planner |
 | `TELEGRAM_BOT_TOKEN` | (optional) | Telegram bot token |
-| `WEB_PORT` | 8420 | Web UI port |
-| `MAX_ITERATIONS_PER_ITEM` | 5 | Max rework attempts per item |
-| `SHELL_TIMEOUT_SECONDS` | 120 | Shell command timeout |
-| `LOG_LEVEL` | INFO | Logging level |
+| `TELEGRAM_ALLOWED_USER_IDS` | (optional) | Comma-separated user IDs |
+| `WEB_HOST` | `127.0.0.1` | Web UI host |
+| `WEB_PORT` | `8420` | Web UI port |
+| `MAX_ITERATIONS_PER_ITEM` | `5` | Max rework attempts per item |
+| `SHELL_TIMEOUT_SECONDS` | `120` | Shell command timeout |
+| `LOG_LEVEL` | `INFO` | Logging level |
 
-## License
+## 🆕 What Changed in v2.0
+
+### New Features
+- ✨ **Intent Routing** - Automatically classifies and routes different request types
+- ✨ **Repository Context** - Analyzes tech stack, tests, conventions before coding
+- ✨ **Human Approval** - Required before all commits and risky operations
+- ✨ **Checkpointing** - Save/resume state at any point
+- ✨ **Safe Search** - Search codebase without shell commands
+- ✨ **Context-Aware Agents** - All agents know project structure and conventions
+
+### New Components
+- `app/core/repo_context.py` - Repository context data models
+- `app/core/checkpoints.py` - Checkpoint management
+- `app/agents/analyzer.py` - Codebase analyzer
+- `app/tools/search.py` - Safe search tool
+- Router, Context Loader, Human Gate nodes
+
+### Enhanced Components
+- `app/core/state.py` - 17 new fields for context and approval
+- `app/core/nodes.py` - Context injection in all prompts
+- `app/core/orchestrator.py` - Entry point changed to router
+- `app/web/server.py` - New `/api/approve` endpoint
+
+### New Dependencies
+- `tomli>=2.0.0` - TOML parsing for config files
+- `pyyaml>=6.0` - YAML parsing for CI/CD configs
+
+### Breaking Changes
+**None!** All changes are backward compatible. Existing workflows continue to work.
+
+## 📚 Documentation
+
+- **AGENT.md** - Instructions for AI agents working on this codebase
+- **CHANGELOG.md** - Detailed version history
+- **CLAUDE.md** - Claude-specific guidance
+- **docs/definition-of-done.md** - Acceptance criteria for tasks
+
+## 🤝 Contributing
+
+See [AGENT.md](AGENT.md) for development guidelines and workflow.
+
+## 📄 License
 
 MIT
+
+---
+
+<div align="center">
+
+**Daedalus v2.0** - Production-ready AI coding with intelligence, safety, and reliability.
+
+[Report Bug](https://github.com/simonabler/Daedalus/issues) · [Request Feature](https://github.com/simonabler/Daedalus/issues)
+
+</div>
+
