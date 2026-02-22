@@ -21,6 +21,7 @@ from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import WorkflowEvent, get_history, set_event_loop, subscribe_async
 from app.core.events import emit_approval_done
+from app.core.approval_registry import registry as approval_registry
 from app.core.logging import get_logger
 from app.core.orchestrator import request_shutdown, reset_shutdown, run_workflow
 from app.core.state import GraphState, WorkflowPhase
@@ -114,6 +115,11 @@ async def _process_tasks():
             final_state = await run_workflow(task_req.task, repo)
             _current_state = final_state
 
+            # If the workflow halted waiting for human approval, register it in
+            # the shared registry so the Telegram bot can also resolve it.
+            if final_state.needs_human_approval:
+                _register_pending_approval(final_state, repo)
+
             await _broadcast_raw("status", {
                 "phase": final_state.phase.value,
                 "completed": final_state.completed_items,
@@ -129,6 +135,51 @@ async def _process_tasks():
             await _broadcast_raw("error", {"message": str(e)})
 
         _task_queue.task_done()
+
+
+# ── Approval registry wiring ──────────────────────────────────────────────
+
+def _register_pending_approval(state: GraphState, repo_root: str) -> None:
+    """Register the current pending approval in the shared registry.
+
+    The resume callback queues a new 'resume' task so the workflow continues
+    after the human decides, regardless of whether the decision comes from the
+    web UI or the Telegram bot.
+    """
+    def _resume(approved: bool) -> None:
+        global _current_state
+        if _current_state is None:
+            return
+
+        pending_type = (_current_state.pending_approval or {}).get("type", "commit")
+
+        if approved:
+            _current_state.pending_approval["approved"] = True
+            _current_state.needs_human_approval = False
+            _current_state.stop_reason = ""
+            checkpoint_manager.mark_latest_approval(True, repo_root=repo_root)
+            emit_approval_done(approved=True, pending_type=pending_type)
+            # Queue a resume task on the asyncio event loop
+            import asyncio
+            if _task_queue is not None:
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.call_soon_threadsafe(
+                        _task_queue.put_nowait,
+                        TaskRequest(task="resume", repo_path=repo_root),
+                    )
+                except Exception as exc:
+                    logger.error("Failed to queue resume task: %s", exc)
+        else:
+            _current_state.pending_approval["approved"] = False
+            _current_state.needs_human_approval = False
+            _current_state.phase = WorkflowPhase.STOPPED
+            _current_state.stop_reason = "user_rejected"
+            checkpoint_manager.mark_latest_approval(False, repo_root=repo_root)
+            emit_approval_done(approved=False, pending_type=pending_type)
+
+    approval_registry.set_pending(state.pending_approval or {}, _resume)
+    logger.info("Pending approval registered in shared registry")
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
@@ -217,17 +268,24 @@ async def approve_pending_action(req: ApprovalRequest):
     }
     _current_state.approval_history.append(entry)
 
+    # If the shared registry holds a callback, let it handle state mutation
+    # and resume queueing — this keeps web and Telegram code paths identical.
+    if approval_registry.is_pending:
+        approval_registry.approve(req.approved)
+        action = "approved" if req.approved else "rejected"
+        return {"status": action, "message": f"Action {action}."}
+
+    # Fallback: direct mutation (used when registry wasn't populated, e.g. tests)
+    pending_type = (_current_state.pending_approval or {}).get("type", "commit")
     if req.approved:
         _current_state.pending_approval["approved"] = True
         _current_state.needs_human_approval = False
         _current_state.stop_reason = ""
         repo_root = str(_current_state.repo_root or "")
         checkpoint_manager.mark_latest_approval(True, repo_root=repo_root)
-        emit_approval_done(approved=True, pending_type=(_current_state.pending_approval or {}).get("type", "commit"))
-
+        emit_approval_done(approved=True, pending_type=pending_type)
         if _task_queue is not None:
             await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
-
         return {"status": "approved", "message": "Action approved, resume queued."}
 
     _current_state.pending_approval["approved"] = False
@@ -235,7 +293,7 @@ async def approve_pending_action(req: ApprovalRequest):
     _current_state.phase = WorkflowPhase.STOPPED
     _current_state.stop_reason = "user_rejected"
     checkpoint_manager.mark_latest_approval(False, repo_root=str(_current_state.repo_root or ""))
-    emit_approval_done(approved=False, pending_type=(_current_state.pending_approval or {}).get("type", "commit"))
+    emit_approval_done(approved=False, pending_type=pending_type)
     return {"status": "rejected", "message": "Action rejected, workflow stopped."}
 
 

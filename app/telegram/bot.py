@@ -1,41 +1,165 @@
 """Telegram bot interface for Daedalus.
 
 Commands:
-  /task <text>  — submit a new task
+  /task <text>  — submit a new coding task
   /status       — show current workflow status
-  /logs         — show recent log entries (last 10)
+  /logs         — show recent log entries (last 20)
+  /approve      — approve a pending human-gate commit
+  /reject       — reject a pending human-gate commit
   /stop         — request workflow stop
+
+Notifications (sent automatically):
+  • Approval required  — when the human gate fires during any workflow
+  • Workflow complete   — when a task finishes (COMPLETE or STOPPED)
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+from typing import Optional
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
+from app.core.approval_registry import registry as approval_registry
 from app.core.config import get_settings
+from app.core.events import EventCategory, WorkflowEvent, subscribe_sync
 from app.core.logging import get_logger
 from app.core.orchestrator import run_workflow
 from app.core.state import GraphState, WorkflowPhase
 
 logger = get_logger("telegram.bot")
 
+# ── Module-level state ───────────────────────────────────────────────────
 _current_state: GraphState | None = None
-_stop_requested = False
+_telegram_app: Application | None = None   # set by create_telegram_app()
+
+# ── Helpers ──────────────────────────────────────────────────────────────
 
 
 def _is_allowed(user_id: int) -> bool:
-    """Check if user is in the allowed list (empty = allow all)."""
+    """Return True if the user is in the allow-list (empty list = allow all)."""
     settings = get_settings()
     allowed = settings.allowed_telegram_ids
     return not allowed or user_id in allowed
 
 
-async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /task command — submit a new coding task."""
+def _allowed_chat_ids() -> list[int]:
+    """Return the configured allowed Telegram user IDs."""
+    return get_settings().allowed_telegram_ids
+
+
+async def _notify_all(text: str, reply_markup=None) -> None:
+    """Send a message to every allowed Telegram user."""
+    if _telegram_app is None:
+        return
+    for uid in _allowed_chat_ids():
+        try:
+            await _telegram_app.bot.send_message(
+                chat_id=uid,
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
+            )
+        except Exception as exc:
+            logger.warning("Failed to notify Telegram user %d: %s", uid, exc)
+
+
+# ── Event bus listener ───────────────────────────────────────────────────
+
+def _on_workflow_event(event: WorkflowEvent) -> None:
+    """Sync listener on the event bus — schedules Telegram notifications."""
+    if _telegram_app is None:
+        return
+
+    try:
+        loop = _telegram_app.bot.loop  # type: ignore[attr-defined]
+    except AttributeError:
+        return
+
+    if event.category == EventCategory.APPROVAL_NEEDED:
+        asyncio.run_coroutine_threadsafe(
+            _send_approval_notification(event.metadata),
+            loop,
+        )
+    elif event.category == EventCategory.STATUS:
+        phase = (event.metadata or {}).get("phase", "")
+        if phase in ("complete", "stopped"):
+            asyncio.run_coroutine_threadsafe(
+                _send_completion_notification(event.title, phase),
+                loop,
+            )
+
+
+async def _send_approval_notification(meta: dict) -> None:
+    """Send an approval-request message with inline APPROVE / REJECT buttons."""
+    summary    = meta.get("summary", "changes pending")
+    files      = meta.get("files", [])
+    triggers   = meta.get("triggers", [])
+    git_status = meta.get("git_status", "")
+
+    trigger_lines = "\n".join(
+        f"  \u2022 {t.get('reason', t.get('type', '?'))}" for t in triggers
+    )
+    file_lines = "\n".join(f"  `{f}`" for f in files[:15])
+    if len(files) > 15:
+        file_lines += f"\n  \u2026 and {len(files) - 15} more"
+
+    status_snippet = ""
+    if git_status:
+        snippet = git_status[:600]
+        status_snippet = f"\n\n*Git status:*\n```\n{snippet}\n```"
+
+    text = (
+        f"\u26a0\ufe0f *HUMAN APPROVAL REQUIRED*\n\n"
+        f"*Summary:* {summary}\n\n"
+        f"*Reasons:*\n{trigger_lines}\n\n"
+        f"*Changed files:*\n{file_lines}"
+        f"{status_snippet}\n\n"
+        f"Use the buttons below or /approve / /reject."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("\u2705 APPROVE", callback_data="approval:approve"),
+            InlineKeyboardButton("\u274c REJECT",  callback_data="approval:reject"),
+        ]
+    ])
+
+    await _notify_all(text, reply_markup=keyboard)
+
+
+async def _send_completion_notification(title: str, phase: str) -> None:
+    """Send a workflow-completion summary to all allowed users."""
+    icon = "\U0001f389" if phase == "complete" else "\U0001f6d1"
+    lines = [f"{icon} *Workflow {phase.upper()}*", "", title]
+
+    if _current_state:
+        done  = _current_state.completed_items
+        total = len(_current_state.todo_items)
+        lines.append(f"Progress: {done}/{total} items")
+        if _current_state.branch_name:
+            lines.append(f"Branch: `{_current_state.branch_name}`")
+        if _current_state.stop_reason and _current_state.stop_reason != "user_rejected":
+            lines.append(f"Stop reason: {_current_state.stop_reason}")
+
+    await _notify_all("\n".join(lines))
+
+
+# ── Command handlers ─────────────────────────────────────────────────────
+
+async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /task — submit a new coding task."""
     if not _is_allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Not authorized.")
+        await update.message.reply_text("\u26d4 Not authorized.")
         return
 
     task_text = " ".join(context.args) if context.args else ""
@@ -43,11 +167,11 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /task <description of the coding task>")
         return
 
-    await update.message.reply_text(f"📋 Task received: {task_text[:200]}\n\nStarting workflow...")
+    await update.message.reply_text(
+        f"\U0001f4cb Task received: {task_text[:200]}\n\nStarting workflow\u2026"
+    )
 
-    global _current_state, _stop_requested
-    _stop_requested = False
-
+    global _current_state
     try:
         settings = get_settings()
         _current_state = GraphState(
@@ -55,17 +179,15 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
             repo_root=settings.target_repo_path,
             phase=WorkflowPhase.PLANNING,
         )
-
         final_state = await run_workflow(task_text, settings.target_repo_path)
         _current_state = final_state
 
-        # Summary
-        done = final_state.completed_items
+        done  = final_state.completed_items
         total = len(final_state.todo_items)
-        status_emoji = "✅" if final_state.phase == WorkflowPhase.COMPLETE else "🛑"
+        icon  = "\u2705" if final_state.phase == WorkflowPhase.COMPLETE else "\U0001f6d1"
 
         summary = (
-            f"{status_emoji} Workflow finished\n"
+            f"{icon} Workflow finished\n"
             f"Phase: {final_state.phase.value}\n"
             f"Progress: {done}/{total} items done\n"
             f"Branch: {final_state.branch_name or 'n/a'}"
@@ -77,78 +199,172 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(summary)
 
-    except Exception as e:
-        logger.error("Task failed: %s", e, exc_info=True)
-        await update.message.reply_text(f"❌ Task failed: {e}")
+    except Exception as exc:
+        logger.error("Task failed: %s", exc, exc_info=True)
+        await update.message.reply_text(f"\u274c Task failed: {exc}")
 
 
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /status command."""
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /status — show current workflow status."""
     if not _is_allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Not authorized.")
+        await update.message.reply_text("\u26d4 Not authorized.")
         return
 
     if not _current_state:
-        await update.message.reply_text("💤 No active task.")
+        await update.message.reply_text("\U0001f4a4 No active task.")
         return
 
+    pending_note = ""
+    if _current_state.needs_human_approval:
+        pending_note = "\n\n\u26a0\ufe0f *Waiting for your approval.* Use /approve or /reject."
+
     await update.message.reply_text(
-        f"📊 Status\n"
-        f"Phase: {_current_state.phase.value}\n"
-        f"Branch: {_current_state.branch_name or 'n/a'}\n"
+        f"\U0001f4ca *Status*\n"
+        f"Phase: `{_current_state.phase.value}`\n"
+        f"Branch: `{_current_state.branch_name or 'n/a'}`\n"
         f"Progress: {_current_state.completed_items}/{len(_current_state.todo_items)} items\n"
         f"{_current_state.get_progress_summary()}"
+        f"{pending_note}",
+        parse_mode="Markdown",
     )
 
 
-async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /logs command — show recent activity."""
+async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /logs — show recent log file entries."""
     if not _is_allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Not authorized.")
+        await update.message.reply_text("\u26d4 Not authorized.")
         return
 
-    # Read from log file (last 20 lines)
     settings = get_settings()
     try:
-        from pathlib import Path
         log_path = Path(settings.log_file)
         if log_path.exists():
             lines = log_path.read_text().strip().split("\n")[-20:]
-            text = "\n".join(lines)
-            if len(text) > 4000:
-                text = text[-4000:]
-            await update.message.reply_text(f"📜 Recent logs:\n```\n{text}\n```", parse_mode="Markdown")
+            text  = "\n".join(lines)
+            if len(text) > 3800:
+                text = text[-3800:]
+            await update.message.reply_text(
+                f"\U0001f4dc Recent logs:\n```\n{text}\n```",
+                parse_mode="Markdown",
+            )
         else:
             await update.message.reply_text("No log file found.")
-    except Exception as e:
-        await update.message.reply_text(f"Error reading logs: {e}")
+    except Exception as exc:
+        await update.message.reply_text(f"Error reading logs: {exc}")
 
 
-async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stop command — request workflow stop."""
+async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /approve — approve a pending human-gate commit."""
     if not _is_allowed(update.effective_user.id):
-        await update.message.reply_text("⛔ Not authorized.")
+        await update.message.reply_text("\u26d4 Not authorized.")
         return
 
-    global _stop_requested
-    _stop_requested = True
-    await update.message.reply_text("🛑 Stop requested. The workflow will halt after the current step.")
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle plain text messages as task submissions."""
-    if not _is_allowed(update.effective_user.id):
+    if not approval_registry.is_pending:
+        await update.message.reply_text(
+            "\u2139\ufe0f Nothing is pending approval right now."
+        )
         return
 
+    resolved = approval_registry.approve(approved=True)
+    if resolved:
+        await update.message.reply_text(
+            "\u2705 *Approved.* The workflow will continue to commit.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "\u26a0\ufe0f Could not resolve — may have already been handled."
+        )
+
+
+async def cmd_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /reject — reject a pending human-gate commit."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+
+    if not approval_registry.is_pending:
+        await update.message.reply_text(
+            "\u2139\ufe0f Nothing is pending approval right now."
+        )
+        return
+
+    resolved = approval_registry.approve(approved=False)
+    if resolved:
+        await update.message.reply_text(
+            "\u274c *Rejected.* The workflow has been stopped.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "\u26a0\ufe0f Could not resolve — may have already been handled."
+        )
+
+
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stop — request a graceful workflow stop."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+
+    from app.core.orchestrator import request_shutdown
+    request_shutdown()
+    await update.message.reply_text(
+        "\U0001f6d1 Stop requested. The workflow will halt after the current step."
+    )
+
+
+async def handle_inline_approval(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle inline keyboard APPROVE / REJECT button presses."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_allowed(query.from_user.id):
+        await query.edit_message_text("\u26d4 Not authorized.")
+        return
+
+    data     = query.data or ""
+    action   = data.split(":", 1)[1] if ":" in data else ""
+    approved = action == "approve"
+
+    if not approval_registry.is_pending:
+        await query.edit_message_text(
+            "\u2139\ufe0f This approval has already been resolved."
+        )
+        return
+
+    resolved = approval_registry.approve(approved=approved)
+    if resolved:
+        result = (
+            "\u2705 *Approved.* Workflow continuing to commit\u2026"
+            if approved
+            else "\u274c *Rejected.* Workflow stopped."
+        )
+        await query.edit_message_text(result, parse_mode="Markdown")
+    else:
+        await query.edit_message_text(
+            "\u26a0\ufe0f Could not resolve — may have already been handled."
+        )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Treat plain-text messages as task submissions."""
+    if not _is_allowed(update.effective_user.id):
+        return
     text = update.message.text.strip()
     if text:
-        # Treat as a task
         context.args = text.split()
         await cmd_task(update, context)
 
 
-def create_telegram_app() -> Application | None:
-    """Create and configure the Telegram bot application. Returns None if token not set."""
+# ── App factory ──────────────────────────────────────────────────────────
+
+def create_telegram_app() -> Optional[Application]:
+    """Build and configure the Telegram Application.  Returns None if no token."""
+    global _telegram_app
+
     settings = get_settings()
     if not settings.telegram_bot_token:
         logger.info("Telegram bot token not set — skipping Telegram integration")
@@ -156,28 +372,38 @@ def create_telegram_app() -> Application | None:
 
     app = Application.builder().token(settings.telegram_bot_token).build()
 
-    app.add_handler(CommandHandler("task", cmd_task))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("logs", cmd_logs))
-    app.add_handler(CommandHandler("stop", cmd_stop))
+    app.add_handler(CommandHandler("task",    cmd_task))
+    app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("logs",    cmd_logs))
+    app.add_handler(CommandHandler("approve", cmd_approve))
+    app.add_handler(CommandHandler("reject",  cmd_reject))
+    app.add_handler(CommandHandler("stop",    cmd_stop))
+    app.add_handler(CallbackQueryHandler(handle_inline_approval, pattern=r"^approval:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Telegram bot configured")
+    # Subscribe to the shared event bus for push notifications
+    subscribe_sync(_on_workflow_event)
+
+    _telegram_app = app
+    logger.info(
+        "Telegram bot configured — commands: /task /status /logs /approve /reject /stop"
+    )
     return app
 
 
-async def run_telegram_bot():
-    """Start the Telegram bot polling loop."""
+# ── Runner ───────────────────────────────────────────────────────────────
+
+async def run_telegram_bot() -> None:
+    """Start the Telegram bot polling loop (runs until cancelled)."""
     telegram_app = create_telegram_app()
     if telegram_app is None:
         return
 
-    logger.info("Starting Telegram bot polling...")
+    logger.info("Starting Telegram bot polling\u2026")
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling(drop_pending_updates=True)
 
-    # Keep running
     try:
         while True:
             await asyncio.sleep(1)
