@@ -217,8 +217,8 @@ def _reviewer_for_worker(worker: str) -> str:
 
 def _coder_label(role: str) -> str:
     return {
-        "coder_a": "Coder A (Claude)",
-        "coder_b": "Coder B (GPT-5.2)",
+        "coder_a": "Coder 1",
+        "coder_b": "Coder 2",
         "documenter": "Documenter",
     }.get(role, role)
 

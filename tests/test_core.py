@@ -89,17 +89,17 @@ class TestTodoItem:
 
 
 class TestDualCoderSettings:
-    def test_coder_a_model_default(self):
+    def test_coder_1_model_default(self):
         with patch.dict("os.environ", {}, clear=True):
             from app.core.config import Settings
             s = Settings(_env_file=None)
-            assert s.coder_a_model == "claude-sonnet-4-20250514"
+            assert s.coder_1_model == "gpt-4o-mini"
 
-    def test_coder_b_model_default(self):
+    def test_coder_2_model_default(self):
         with patch.dict("os.environ", {}, clear=True):
             from app.core.config import Settings
             s = Settings(_env_file=None)
-            assert s.coder_b_model == "gpt-5.2"
+            assert s.coder_2_model == "gpt-4o-mini"
 
     def test_documenter_model_default(self):
         with patch.dict("os.environ", {}, clear=True):
@@ -114,7 +114,10 @@ class TestDualCoderSettings:
 
     def test_custom_models(self):
         from app.core.config import Settings
-        s = Settings(coder_a_model="claude-opus-4-0-20250514", coder_b_model="gpt-4o")
+        s = Settings(coder_1_model="claude-opus-4-0-20250514", coder_2_model="gpt-4o")
+        assert s.coder_1_model == "claude-opus-4-0-20250514"
+        assert s.coder_2_model == "gpt-4o"
+        # Legacy properties still work
         assert s.coder_a_model == "claude-opus-4-0-20250514"
         assert s.coder_b_model == "gpt-4o"
 

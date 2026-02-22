@@ -52,7 +52,7 @@ Planner → Coder (A|B) → Peer Review (B|A) → Learn → Planner Review → T
                └───────────────┘ REWORK ─────────────────┘ REWORK ───────┘ FAIL
 ```
 
-- **Dual-coder**: Even items → Coder A (Claude), odd items → Coder B (GPT-5.3)
+- **Dual-coder**: Even items → Coder 1, odd items → Coder 2 (both fully configurable via `.env`)
 - **Cross-model peer review**: The OTHER coder reviews each implementation
 - **Learn node**: Extracts reusable insights from every review into shared memory files
 - **All rework loops** return to the original coder (reviewer never implements)
@@ -119,8 +119,8 @@ python -m app.main      # Start server on :8420
 | `OPENAI_API_KEY` | OpenAI API key | (required) |
 | `ANTHROPIC_API_KEY` | Anthropic API key | (required) |
 | `PLANNER_MODEL` | Planner LLM | `gpt-4o-mini` |
-| `CODER_A_MODEL` | Coder A LLM | `claude-sonnet-4-20250514` |
-| `CODER_B_MODEL` | Coder B LLM | `gpt-5.2` |
+| `CODER_1_MODEL` | Coder 1 LLM | `gpt-4o-mini` |
+| `CODER_2_MODEL` | Coder 2 LLM | `gpt-4o-mini` |
 | `TESTER_MODEL` | Tester LLM | `gpt-4o-mini` |
 | `TARGET_REPO_PATH` | Path to the repo to work on | (required) |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token | (optional) |

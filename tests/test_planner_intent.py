@@ -23,7 +23,7 @@ def test_parse_todo_for_resume():
 
 - [x] Item 1: Setup project
   - Type: coding
-  - Owner: Coder A (Claude)
+  - Owner: Coder 1
   - AC: Works
   - Verify: `pytest -q`
 
