@@ -5,17 +5,21 @@ Nodes call `emit(...)` to publish structured events.  The web server
 forward to the user in real-time.
 
 Event categories:
-  node_start    — a graph node begins execution
-  node_end      — a graph node finishes
-  agent_think   — an LLM is invoked (before response)
-  agent_result  — LLM returned a response
-  tool_call     — a tool is being called
-  tool_result   — tool returned
-  plan          — planner produced / updated the plan
-  status        — phase/progress change
-  verdict       — review or test verdict (APPROVE/REWORK/PASS/FAIL)
-  commit        — a commit was made
-  error         — something went wrong
+  node_start       — a graph node begins execution
+  node_end         — a graph node finishes
+  agent_think      — an LLM is invoked (before response)
+  agent_result     — LLM returned a response
+  tool_call        — a tool is being called
+  tool_result      — tool returned
+  plan             — planner produced / updated the plan
+  status           — phase/progress change
+  verdict          — review or test verdict (APPROVE/REWORK/PASS/FAIL)
+  commit           — a commit was made
+  error            — something went wrong
+  approval_needed  — human gate fired; UI must show approve/reject panel
+  approval_done    — human submitted an approve or reject decision
+  coder_question   — coder paused mid-item to ask the human a question
+  coder_answer     — human submitted an answer to the coder's question
 """
 
 from __future__ import annotations
@@ -54,6 +58,10 @@ class EventCategory(str, Enum):
     VERDICT = "verdict"
     COMMIT = "commit"
     ERROR = "error"
+    APPROVAL_NEEDED = "approval_needed"
+    APPROVAL_DONE = "approval_done"
+    CODER_QUESTION = "coder_question"
+    CODER_ANSWER = "coder_answer"
 
 
 @dataclass
@@ -242,4 +250,79 @@ def emit_error(agent: str, error: str) -> None:
         agent=agent,
         title=f"❌ Error in {agent}",
         detail=error,
+    ))
+
+
+def emit_approval_needed(pending: dict) -> None:
+    """Emit when the human gate fires and the UI must show an approve/reject panel.
+
+    ``pending`` is the full ``pending_approval`` dict from GraphState, which
+    contains: summary, files, triggers, diff_preview, git_status, timestamp.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.APPROVAL_NEEDED,
+        agent="system",
+        title="⚠️ Human approval required before commit",
+        detail=pending.get("diff_preview", ""),
+        metadata={
+            "summary": pending.get("summary", ""),
+            "files": pending.get("files", []),
+            "triggers": pending.get("triggers", []),
+            "git_status": pending.get("git_status", ""),
+            "timestamp": pending.get("timestamp", ""),
+        },
+    ))
+
+
+def emit_approval_done(approved: bool, pending_type: str = "commit") -> None:
+    """Emit after the human has submitted an approve or reject decision."""
+    icon = "✅" if approved else "❌"
+    action = "approved" if approved else "rejected"
+    emit(WorkflowEvent(
+        category=EventCategory.APPROVAL_DONE,
+        agent="system",
+        title=f"{icon} Human {action} the {pending_type}",
+        metadata={"approved": approved, "pending_type": pending_type},
+    ))
+
+
+def emit_coder_question(
+    asked_by: str,
+    question: str,
+    context: str = "",
+    options: list | None = None,
+    item_id: str = "",
+) -> None:
+    """Emit when a coder agent pauses mid-item to ask the human a critical question.
+
+    Args:
+        asked_by:  The coder role (``"coder_a"`` or ``"coder_b"``).
+        question:  The question text the human must answer.
+        context:   Why the coder is asking (architectural context, trade-offs, etc.).
+        options:   Suggested answer choices (may be empty for open-ended questions).
+        item_id:   The current work item ID for traceability.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.CODER_QUESTION,
+        agent=asked_by,
+        title=f"🤔 {asked_by} is asking a question",
+        detail=question,
+        metadata={
+            "question": question,
+            "context": context,
+            "options": options or [],
+            "asked_by": asked_by,
+            "item_id": item_id,
+        },
+    ))
+
+
+def emit_coder_answer(asked_by: str, answer: str, item_id: str = "") -> None:
+    """Emit when the human submits an answer to the coder's question."""
+    emit(WorkflowEvent(
+        category=EventCategory.CODER_ANSWER,
+        agent="system",
+        title="💬 Human answered the coder's question",
+        detail=answer,
+        metadata={"asked_by": asked_by, "answer": answer, "item_id": item_id},
     ))

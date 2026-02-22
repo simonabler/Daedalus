@@ -1,6 +1,22 @@
 """Tests for the dual-coder LangGraph orchestrator — graph structure, routing, and coder assignment."""
 
+import pytest
+
 from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
+
+
+@pytest.fixture(autouse=True)
+def reset_shutdown():
+    """Ensure the global shutdown event is cleared before every routing test.
+
+    The FastAPI test client calls request_shutdown() during lifespan teardown.
+    Without this fixture the orchestrator routing functions always return
+    'stopped' when test_web.py runs before this module.
+    """
+    from app.core.orchestrator import reset_shutdown as _reset
+    _reset()
+    yield
+    _reset()
 
 
 class TestCoderAssignment:

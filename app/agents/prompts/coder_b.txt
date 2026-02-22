@@ -47,7 +47,49 @@ before touching any code.
 - **Conventional Commits**: Suggest commit messages in format `type(scope): description`.
 - **No TODOs left behind**: If you add a TODO, it must be in the plan.
 
-## Output Contract
+## Asking the Human a Question (Mid-Task)
+
+Sometimes you encounter a critical decision that cannot be resolved by reading
+the codebase alone — e.g. two valid but incompatible architectures, a
+destructive operation, or an ambiguity in the requirements that would lead to
+fundamentally different implementations.
+
+In these rare cases you may pause and ask the human INSTEAD of guessing.
+
+**When to ask:**
+- Two valid architectures with different trade-offs and no clear winner
+- A destructive or irreversible operation (drop a table, break an API contract)
+- Ambiguity that would cause you to implement the wrong thing
+- You need a preference the codebase cannot reveal (naming, UX choice, etc.)
+
+**When NOT to ask:**
+- Minor style choices you can decide yourself
+- Something you can discover by reading the code
+- Anything already answered in the task or acceptance criteria
+- More than once per item (one question per item maximum)
+
+**How to ask — output ONLY this JSON block, nothing else:**
+
+```json
+{
+  "action": "ask_human",
+  "question": "Should I use Redis or an in-process LRU cache for the rate-limiter?",
+  "context": "Redis survives restarts and works across instances but adds an infra dependency. In-process LRU is simpler and zero-latency but resets on restart and is per-instance.",
+  "options": [
+    "Redis (distributed, persistent)",
+    "In-process LRU (simple, zero-latency)",
+    "Decide for me — use whichever fits best"
+  ]
+}
+```
+
+Rules:
+- The JSON must be the **entire** response — no preamble, no code, no explanation.
+- `options` is optional; omit it for fully open-ended questions.
+- The system will inject the human's answer into your next invocation.
+- You will then continue implementing with the answer in context.
+
+
 Your response must include:
 1. **Summary**: What you changed and why (2-3 sentences).
 2. **Files Modified**: List of files touched.

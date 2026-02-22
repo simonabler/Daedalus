@@ -147,6 +147,154 @@
     cursor: pointer; letter-spacing: 0.5px; transition: opacity 0.15s;
   }
   .input-row button:hover { opacity: 0.85; }
+
+  /* ── Approval Panel ──────────────────────── */
+  .approval-panel {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--yellow); background: #1e1a08;
+    animation: slide-in 0.25s ease;
+  }
+  @keyframes slide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .approval-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #2a2308; border-bottom: 1px solid #3a3010;
+  }
+  .approval-header .approval-icon { font-size: 18px; }
+  .approval-header .approval-title {
+    flex: 1; font-size: 13px; font-weight: 700; color: var(--yellow); letter-spacing: 0.5px;
+  }
+  .approval-header .approval-summary { font-size: 11px; color: var(--text-dim); }
+
+  .approval-triggers {
+    padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px;
+    border-bottom: 1px solid #2a2210;
+  }
+  .trigger-pill {
+    padding: 3px 9px; border-radius: 12px; font-size: 10px; font-weight: 600;
+    letter-spacing: 0.4px; text-transform: uppercase;
+  }
+  .trigger-commit   { background: #1a2a40; color: #60a5fa; }
+  .trigger-large    { background: #2a1f00; color: var(--yellow); }
+  .trigger-deletion { background: #3a1010; color: var(--red); }
+  .trigger-ci       { background: #1a1a40; color: var(--purple); }
+
+  .approval-files {
+    padding: 8px 16px; border-bottom: 1px solid #2a2210;
+  }
+  .approval-files .files-label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .approval-files .file-list {
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .approval-files .file-entry {
+    font-size: 11px; color: var(--text-dim); padding: 1px 0;
+  }
+  .approval-files .file-entry::before { content: "• "; color: var(--text-faint); }
+
+  .approval-diff {
+    border-bottom: 1px solid #2a2210;
+  }
+  .approval-diff details summary {
+    padding: 8px 16px; font-size: 11px; color: var(--text-faint); cursor: pointer;
+    user-select: none; list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  .approval-diff details summary::marker { content: ''; }
+  .approval-diff details summary .diff-arrow { font-size: 9px; transition: transform 0.2s; }
+  .approval-diff details[open] summary .diff-arrow { transform: rotate(90deg); }
+  .approval-diff .diff-body {
+    padding: 10px 16px; font-size: 10.5px; line-height: 1.5; color: var(--text-dim);
+    white-space: pre; overflow-x: auto; max-height: 300px; overflow-y: auto;
+    border-top: 1px solid #2a2210; tab-size: 4;
+  }
+  .approval-diff .diff-body::-webkit-scrollbar { width: 4px; height: 4px; }
+  .approval-diff .diff-body::-webkit-scrollbar-thumb { background: var(--border); }
+  /* diff syntax colouring */
+  .diff-add  { color: #4ade80; }
+  .diff-del  { color: #f87171; }
+  .diff-hunk { color: #67e8f9; }
+  .diff-meta { color: var(--text-faint); }
+
+  .approval-actions {
+    display: flex; gap: 10px; padding: 12px 16px;
+  }
+  .btn-approve, .btn-reject {
+    flex: 1; padding: 10px 0; border: none; border-radius: 6px;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.8px; cursor: pointer; transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn-approve { background: #166534; color: #4ade80; }
+  .btn-approve:hover { background: #15803d; }
+  .btn-reject  { background: #7f1d1d; color: #f87171; }
+  .btn-reject:hover  { background: #991b1b; }
+  .btn-approve:active, .btn-reject:active { transform: scale(0.97); }
+  .btn-approve:disabled, .btn-reject:disabled {
+    opacity: 0.4; cursor: default; transform: none;
+  }
+
+  /* ── Coder Question Panel ────────────────── */
+  .question-panel {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--purple); background: #130e1e;
+    animation: slide-in 0.25s ease;
+  }
+  .question-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #1a1228; border-bottom: 1px solid #2a1a40;
+  }
+  .question-header .q-icon { font-size: 18px; }
+  .question-header .q-title {
+    flex: 1; font-size: 13px; font-weight: 700; color: var(--purple); letter-spacing: 0.5px;
+  }
+  .question-header .q-agent {
+    font-size: 10px; padding: 2px 8px; border-radius: 8px;
+    background: #2a1a40; color: #c084fc; font-weight: 700; text-transform: uppercase;
+  }
+  .question-body { padding: 14px 16px; border-bottom: 1px solid #2a1a40; }
+  .question-text {
+    font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 0;
+  }
+  .question-context {
+    margin-top: 8px; font-size: 11px; color: var(--text-dim); line-height: 1.5;
+    padding: 8px 12px; background: var(--surface2); border-radius: 4px;
+    border-left: 2px solid var(--purple);
+  }
+  .question-options {
+    padding: 10px 16px; display: flex; flex-direction: column; gap: 6px;
+    border-bottom: 1px solid #2a1a40;
+  }
+  .question-options .opt-label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;
+  }
+  .btn-option {
+    padding: 8px 14px; background: #1e1430; border: 1px solid #3a1a55;
+    border-radius: 5px; color: #c084fc; font-family: var(--font); font-size: 11.5px;
+    text-align: left; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-option:hover { background: #2a1a45; border-color: var(--purple); }
+  .question-freetext {
+    padding: 10px 16px; display: flex; gap: 8px;
+  }
+  .question-freetext .ft-label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 4px;
+  }
+  .question-freetext-inner { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .question-freetext input {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface2); color: var(--text); font-family: var(--font);
+    font-size: 12px; outline: none;
+  }
+  .question-freetext input:focus { border-color: var(--purple); }
+  .btn-answer {
+    align-self: flex-end; padding: 8px 20px; background: var(--purple);
+    color: #fff; border: none; border-radius: 5px; font-family: var(--font);
+    font-size: 12px; font-weight: 700; cursor: pointer; transition: opacity 0.15s;
+  }
+  .btn-answer:hover { opacity: 0.85; }
+  .btn-answer:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -289,6 +437,226 @@ function addToolCall(agent, toolName, args, result) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+// ── Diff syntax highlighting ─────────────────
+function renderDiff(raw) {
+  return raw.split('\n').map(line => {
+    const e = esc(line);
+    if (line.startsWith('+') && !line.startsWith('+++')) return `<span class="diff-add">${e}</span>`;
+    if (line.startsWith('-') && !line.startsWith('---')) return `<span class="diff-del">${e}</span>`;
+    if (line.startsWith('@@'))  return `<span class="diff-hunk">${e}</span>`;
+    if (line.startsWith('diff') || line.startsWith('index') || line.startsWith('---') || line.startsWith('+++'))
+      return `<span class="diff-meta">${e}</span>`;
+    return e;
+  }).join('\n');
+}
+
+// ── Build and insert the approval panel ──────
+let _approvalPanel = null;
+
+function showApprovalPanel(meta) {
+  currentDetailBlock = null;
+
+  // Remove any existing panel first (shouldn't happen, but be safe)
+  if (_approvalPanel) _approvalPanel.remove();
+
+  const panel = document.createElement('div');
+  panel.className = 'approval-panel';
+
+  // Trigger pills
+  const triggerPillsHTML = (meta.triggers || []).map(t => {
+    const cls = t.type === 'commit'       ? 'trigger-commit'
+              : t.type === 'large_diff'   ? 'trigger-large'
+              : t.type === 'file_deletion'? 'trigger-deletion'
+              : t.type === 'ci_config_change' ? 'trigger-ci' : 'trigger-commit';
+    return `<span class="trigger-pill ${cls}">${esc(t.reason)}</span>`;
+  }).join('');
+
+  // File list (max 20 shown)
+  const files = meta.files || [];
+  const fileListHTML = files.slice(0, 20).map(f =>
+    `<div class="file-entry">${esc(f)}</div>`
+  ).join('') + (files.length > 20
+    ? `<div class="file-entry" style="color:var(--text-faint)">… and ${files.length - 20} more</div>`
+    : '');
+
+  // Diff preview
+  const diffRaw = meta.diff_preview || '';
+  const diffSection = diffRaw ? `
+    <div class="approval-diff">
+      <details>
+        <summary>
+          <span class="diff-arrow">▶</span>
+          Show diff preview (${diffRaw.split('\n').length} lines)
+        </summary>
+        <div class="diff-body">${renderDiff(diffRaw)}</div>
+      </details>
+    </div>` : '';
+
+  panel.innerHTML = `
+    <div class="approval-header">
+      <span class="approval-icon">⚠️</span>
+      <span class="approval-title">HUMAN APPROVAL REQUIRED</span>
+      <span class="approval-summary">${esc(meta.summary || '')}</span>
+    </div>
+    <div class="approval-triggers">${triggerPillsHTML}</div>
+    <div class="approval-files">
+      <div class="files-label">Changed files</div>
+      <div class="file-list">${fileListHTML || '<div class="file-entry" style="color:var(--text-faint)">No staged files detected</div>'}</div>
+    </div>
+    ${diffSection}
+    <div class="approval-actions">
+      <button class="btn-approve" id="btnApprove">✅ APPROVE</button>
+      <button class="btn-reject"  id="btnReject">❌ REJECT</button>
+    </div>`;
+
+  chat.appendChild(panel);
+  _approvalPanel = panel;
+  scrollBottom();
+
+  // Wire buttons
+  panel.querySelector('#btnApprove').addEventListener('click', () => submitApproval(true, panel));
+  panel.querySelector('#btnReject').addEventListener('click',  () => submitApproval(false, panel));
+}
+
+async function submitApproval(approved, panel) {
+  const btnApprove = panel.querySelector('#btnApprove');
+  const btnReject  = panel.querySelector('#btnReject');
+  btnApprove.disabled = true;
+  btnReject.disabled  = true;
+  btnApprove.textContent = approved ? '⏳ Approving…' : '✅ APPROVE';
+  btnReject.textContent  = approved ? '❌ REJECT' : '⏳ Rejecting…';
+
+  try {
+    const res = await fetch('/api/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      addStatus(`❌ Approval error: ${data.error}`, 'status-error');
+      btnApprove.disabled = false;
+      btnReject.disabled  = false;
+      btnApprove.textContent = '✅ APPROVE';
+      btnReject.textContent  = '❌ REJECT';
+      return;
+    }
+    // Replace panel with confirmation
+    const confirmEl = document.createElement('div');
+    confirmEl.className = `msg msg-status ${approved ? 'status-verdict-approve' : 'status-error'}`;
+    confirmEl.textContent = approved
+      ? '✅ Approved — workflow continuing to commit…'
+      : '❌ Rejected — workflow stopped.';
+    panel.replaceWith(confirmEl);
+    _approvalPanel = null;
+    scrollBottom();
+  } catch (err) {
+    addStatus(`❌ Network error: ${err}`, 'status-error');
+    btnApprove.disabled = false;
+    btnReject.disabled  = false;
+    btnApprove.textContent = '✅ APPROVE';
+    btnReject.textContent  = '❌ REJECT';
+  }
+}
+
+// ── Coder Question Panel ─────────────────────
+let _questionPanel = null;
+
+function showQuestionPanel(meta) {
+  currentDetailBlock = null;
+  if (_questionPanel) _questionPanel.remove();
+
+  const panel = document.createElement('div');
+  panel.className = 'question-panel';
+
+  const agentLabel = meta.asked_by === 'coder_a' ? 'CODER A · Claude' : 'CODER B · GPT';
+
+  const contextHtml = meta.context
+    ? `<div class="question-context">${esc(meta.context)}</div>` : '';
+
+  const options = meta.options || [];
+  const optionsHtml = options.length
+    ? `<div class="question-options">
+        <div class="opt-label">Quick answers</div>
+        ${options.map((o, i) => `<button class="btn-option" data-idx="${i}">${esc(o)}</button>`).join('')}
+      </div>` : '';
+
+  panel.innerHTML = `
+    <div class="question-header">
+      <span class="q-icon">🤔</span>
+      <span class="q-title">CODER IS ASKING</span>
+      <span class="q-agent">${esc(agentLabel)}</span>
+    </div>
+    <div class="question-body">
+      <div class="question-text">${esc(meta.question)}</div>
+      ${contextHtml}
+    </div>
+    ${optionsHtml}
+    <div class="question-freetext">
+      <div class="question-freetext-inner">
+        <div class="ft-label">Custom answer</div>
+        <input type="text" id="answerInput" placeholder="Type your answer…" autocomplete="off" />
+        <button class="btn-answer" id="btnAnswer">SEND</button>
+      </div>
+    </div>`;
+
+  chat.appendChild(panel);
+  _questionPanel = panel;
+  scrollBottom();
+
+  // Option buttons
+  panel.querySelectorAll('.btn-option').forEach(btn => {
+    btn.addEventListener('click', () => submitAnswer(btn.textContent.trim(), panel));
+  });
+
+  // Free-text send
+  panel.querySelector('#btnAnswer').addEventListener('click', () => {
+    const val = panel.querySelector('#answerInput').value.trim();
+    if (val) submitAnswer(val, panel);
+  });
+  panel.querySelector('#answerInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const val = panel.querySelector('#answerInput').value.trim();
+      if (val) submitAnswer(val, panel);
+    }
+  });
+}
+
+async function submitAnswer(answer, panel) {
+  const btn = panel.querySelector('#btnAnswer');
+  const input = panel.querySelector('#answerInput');
+  if (btn) btn.disabled = true;
+  if (input) input.disabled = true;
+  panel.querySelectorAll('.btn-option').forEach(b => b.disabled = true);
+
+  try {
+    const res = await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      addStatus(`❌ Answer error: ${data.error}`, 'status-error');
+      if (btn) btn.disabled = false;
+      if (input) input.disabled = false;
+      panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
+      return;
+    }
+    const confirmEl = document.createElement('div');
+    confirmEl.className = 'msg msg-status status-verdict-approve';
+    confirmEl.textContent = `💬 Answer sent: "${answer}" — coder will continue.`;
+    panel.replaceWith(confirmEl);
+    _questionPanel = null;
+    scrollBottom();
+  } catch (err) {
+    addStatus(`❌ Network error: ${err}`, 'status-error');
+    if (btn) btn.disabled = false;
+    if (input) input.disabled = false;
+    panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
+  }
+}
+
 // ── Handle incoming events ───────────────
 function handleEvent(evt) {
   const { category, agent, title, detail, metadata } = evt;
@@ -333,6 +701,43 @@ function handleEvent(evt) {
 
     case 'error':
       addStatus(title + (detail ? ': ' + detail : ''), 'status-error');
+      break;
+
+    case 'approval_needed':
+      showApprovalPanel(metadata || {});
+      break;
+
+    case 'approval_done':
+      // Panel was already replaced by submitApproval(); this just ensures
+      // any late-joining client (reconnect) also sees the outcome.
+      if (_approvalPanel) {
+        const approved = metadata?.approved;
+        const confirmEl = document.createElement('div');
+        confirmEl.className = `msg msg-status ${approved ? 'status-verdict-approve' : 'status-error'}`;
+        confirmEl.textContent = approved
+          ? '✅ Approved — workflow continuing to commit…'
+          : '❌ Rejected — workflow stopped.';
+        _approvalPanel.replaceWith(confirmEl);
+        _approvalPanel = null;
+        scrollBottom();
+      }
+      break;
+
+    case 'coder_question':
+      showQuestionPanel(metadata || {});
+      break;
+
+    case 'coder_answer':
+      // Panel replaced by submitAnswer(); handle reconnect case
+      if (_questionPanel) {
+        const answerText = metadata?.answer || '';
+        const confirmEl = document.createElement('div');
+        confirmEl.className = 'msg msg-status status-verdict-approve';
+        confirmEl.textContent = `💬 Answer sent: "${answerText}" — coder will continue.`;
+        _questionPanel.replaceWith(confirmEl);
+        _questionPanel = null;
+        scrollBottom();
+      }
       break;
 
     case 'node_start':
@@ -422,6 +827,22 @@ function sendTask() {
 
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
 connectWS();
+
+// On page load, check if a task is already waiting for approval or a coder answer
+fetch('/api/status').then(r => r.json()).then(data => {
+  updateHeader(data);
+  if (data.phase === 'waiting_for_approval' && !_approvalPanel) {
+    fetch('/api/pending').then(r => r.json()).then(p => {
+      if (p && p.needs_human_approval) showApprovalPanel(p.pending_approval || {});
+    }).catch(() => {});
+  }
+  if (data.phase === 'waiting_for_answer' && !_questionPanel) {
+    fetch('/api/question').then(r => r.json()).then(q => {
+      if (q && q.needs_coder_answer) showQuestionPanel(q.coder_question || {});
+    }).catch(() => {});
+  }
+}).catch(() => {});
+
 setInterval(() => {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     fetch('/api/status').then(r => r.json()).then(updateHeader).catch(() => {});
