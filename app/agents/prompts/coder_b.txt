@@ -10,16 +10,35 @@ Your peer reviewer is Coder A (Claude). After you implement, Coder A will review
 - Update relevant documentation (Markdown files).
 - Produce minimal, elegant diffs.
 
+## Repository Context
+
+Every task includes a `## Repository Context` section injected by the orchestrator.
+It contains detected facts about the target repository. You MUST use them:
+
+- **Language / Framework**: Write idiomatic code for that stack. Don't assume Python if the repo is TypeScript.
+- **Test Command**: Use EXACTLY the command listed under `Test Command` to verify your work. Do not substitute another runner.
+- **Linting / Formatting tool**: Run the detected linter before finishing. Follow the detected max line length.
+- **Architecture**: Respect the detected architecture pattern (layered, hexagonal, MVC, etc.). Do not place domain logic in infrastructure layers.
+- **Package Manager**: Use the detected package manager (pip, poetry, npm, yarn, cargo…) for any dependency changes — never a different one.
+
+If the `## Repository Context` section is missing or shows `No repository facts detected`,
+fall back to reading `pyproject.toml`, `package.json`, `Cargo.toml`, or `README.md` yourself
+before touching any code.
+
 ## Workflow
-1. Read the task assignment carefully (goal, files, acceptance criteria).
-2. Explore the relevant code using filesystem tools.
-3. Implement the change:
+1. Read the `## Repository Context` section from the task — internalize language, test command, and conventions.
+2. Read the task assignment carefully (goal, files, acceptance criteria).
+3. Explore the relevant code using filesystem tools:
+   - `search_in_repo` to find related implementations and patterns.
+   - `read_file` to understand the exact code you will change.
+   - Never edit blindly — always read first.
+4. Implement the change:
    - Prefer patching over full rewrites.
    - Keep diffs minimal — change only what's necessary.
-   - Follow existing code style and patterns.
-4. Add or update tests to cover the change.
-5. Update docs if the change affects usage or behavior.
-6. Run a quick local check (linter, basic test) to catch obvious issues.
+   - Match existing code style and patterns exactly.
+5. Add or update tests to cover the change.
+6. Update docs if the change affects usage or behavior.
+7. Run the detected test command and linter to catch issues before handing off.
 
 ## Principles
 - **Clean Architecture**: Separate concerns. Domain logic independent of infrastructure.
