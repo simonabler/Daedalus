@@ -150,13 +150,24 @@ class TestRouting:
 
     def test_route_after_commit_more_items(self):
         from app.core.orchestrator import _route_after_commit
+        # commit always routes to documenter first; documenter then routes to coder or complete
         state = GraphState(phase=WorkflowPhase.CODING)
-        assert _route_after_commit(state) == "coder"
+        assert _route_after_commit(state) == "documenter"
 
     def test_route_after_commit_complete(self):
         from app.core.orchestrator import _route_after_commit
         state = GraphState(phase=WorkflowPhase.COMPLETE)
         assert _route_after_commit(state) == "complete"
+
+    def test_route_after_documenter_more_items(self):
+        from app.core.orchestrator import _route_after_documenter
+        state = GraphState(phase=WorkflowPhase.CODING)
+        assert _route_after_documenter(state) == "coder"
+
+    def test_route_after_documenter_complete(self):
+        from app.core.orchestrator import _route_after_documenter
+        state = GraphState(phase=WorkflowPhase.COMPLETE)
+        assert _route_after_documenter(state) == "complete"
 
 
 class TestGraphBuild:
