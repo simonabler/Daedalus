@@ -972,6 +972,76 @@ def _heuristic_analysis(repo_path: Path) -> dict:
     return facts
 
 
+def _format_intelligence_summary_for_prompt(state: "GraphState") -> str:
+    """Return a concise, consolidated intelligence block for any agent prompt.
+
+    Combines static analysis, call graph, dependency graph and smell data
+    into a single ``## Code Intelligence Summary`` section. Designed to be
+    appended to any agent's prompt without repetition.
+
+    Budget control:
+    - planner / coder: full (max smells=8, issues=8, cg=8, dg=5)
+    - reviewer:        reduced (smells=5, issues=5, cg=5, dg=3)
+    - tester:          minimal (smells=3, issues=5)
+    """
+    parts: list[str] = []
+
+    if state.static_issues:
+        parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=8))
+    if state.call_graph:
+        parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=8))
+    if state.dependency_graph:
+        parts.append(_format_dep_graph_for_prompt(state.dependency_graph, max_entries=5))
+    if state.code_smells:
+        parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=8))
+
+    if not parts:
+        return ""
+
+    cached_note = ""
+    if getattr(state, "intelligence_cached", False):
+        key = getattr(state, "intelligence_cache_key", "")
+        cached_note = f" (cached @ {key})" if key else " (cached)"
+
+    header = f"## Code Intelligence Summary{cached_note}\n"
+    return header + "\n\n".join(parts)
+
+
+def _format_intelligence_summary_reviewer(state: "GraphState") -> str:
+    """Reduced intelligence block for reviewer agents."""
+    parts: list[str] = []
+    if state.static_issues:
+        parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=5))
+    if state.call_graph:
+        parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=5))
+    if state.dependency_graph:
+        parts.append(_format_dep_graph_for_prompt(state.dependency_graph, max_entries=3))
+    if state.code_smells:
+        parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=5))
+    if not parts:
+        return ""
+    cached_note = ""
+    if getattr(state, "intelligence_cached", False):
+        key = getattr(state, "intelligence_cache_key", "")
+        cached_note = f" (cached @ {key})" if key else " (cached)"
+    return f"## Code Intelligence Summary{cached_note}\n" + "\n\n".join(parts)
+
+
+def _format_intelligence_summary_tester(state: "GraphState") -> str:
+    """Minimal intelligence block for tester agent — smells + static errors only."""
+    parts: list[str] = []
+    if state.static_issues:
+        parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=5))
+    if state.code_smells:
+        # Tester only needs errors, not info-level smells
+        errors_only = [s for s in state.code_smells if s.get("severity") == "error"]
+        if errors_only:
+            parts.append(_format_code_smells_for_prompt(errors_only, max_smells=3))
+    if not parts:
+        return ""
+    return "## Code Intelligence Summary\n" + "\n\n".join(parts)
+
+
 def _format_context_summary(repo_facts: dict) -> str:
     if not repo_facts:
         return "no facts detected"
@@ -1358,14 +1428,9 @@ def planner_plan_node(state: GraphState) -> dict:
     if state.repo_facts:
         context_parts.append(_format_repo_context_for_prompt(state.repo_facts))
         context_parts.append("Repository facts summary:\n" + _format_context_summary(state.repo_facts))
-    if state.static_issues:
-        context_parts.append(_format_static_issues_for_prompt(state.static_issues))
-    if state.call_graph:
-        context_parts.append(_format_call_graph_for_prompt(state.call_graph))
-    if state.dependency_graph:
-        context_parts.append(_format_dep_graph_for_prompt(state.dependency_graph))
-    if state.code_smells:
-        context_parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=10))
+    intelligence_summary = _format_intelligence_summary_for_prompt(state)
+    if intelligence_summary:
+        context_parts.append(intelligence_summary)
     if state.context_listing:
         context_parts.append(
             "Repository listing (depth<=2):\n"
@@ -1629,14 +1694,9 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(f"**Test Report (previous)**:\n{item.test_report}")
     if state.repo_facts:
         prompt_parts.append(_format_repo_context_for_prompt(state.repo_facts))
-    if state.static_issues:
-        prompt_parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=10))
-    if state.call_graph:
-        prompt_parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=10))
-    if state.dependency_graph:
-        prompt_parts.append(_format_dep_graph_for_prompt(state.dependency_graph, max_entries=5))
-    if state.code_smells:
-        prompt_parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=5))
+    intelligence_summary = _format_intelligence_summary_for_prompt(state)
+    if intelligence_summary:
+        prompt_parts.append(intelligence_summary)
     if state.agent_instructions:
         prompt_parts.append(
             "**Repository Documentation (excerpt)**:\n"
@@ -1742,7 +1802,7 @@ def peer_review_node(state: GraphState) -> dict:
 
     item.status = ItemStatus.IN_REVIEW
 
-    call_graph_ctx = _format_call_graph_for_prompt(state.call_graph, max_entries=8) if state.call_graph else ""
+    intelligence_ctx = _format_intelligence_summary_reviewer(state)
 
     prompt = (
         f"## Peer Code Review\n\n"
@@ -1750,7 +1810,7 @@ def peer_review_node(state: GraphState) -> dict:
         f"**Implementer**: {impl_label}\n"
         f"**Item**: {item.id} — {item.description}\n\n"
         f"**Implementer's Report**:\n{state.last_coder_result}\n\n"
-        + (f"{call_graph_ctx}\n\n" if call_graph_ctx else "")
+        + (f"{intelligence_ctx}\n\n" if intelligence_ctx else "")
         + f"Review the changes. Also verify consistency with the shared memory "
         f"(coding style, architecture decisions, insights):\n"
         f"1. Use `git_command` with `git diff` to see the actual changes.\n"
@@ -1990,6 +2050,9 @@ def tester_node(state: GraphState) -> dict:
         prompt += "**Acceptance Criteria**:\n" + "\n".join(f"- {ac}" for ac in item.acceptance_criteria) + "\n"
     if item.verification_commands:
         prompt += "**Verification Commands**:\n" + "\n".join(f"- `{vc}`" for vc in item.verification_commands) + "\n"
+    intelligence_ctx = _format_intelligence_summary_tester(state)
+    if intelligence_ctx:
+        prompt += f"\n\n{intelligence_ctx}"
     prompt += (
         "\nRun all tests, linters, and verification commands. "
         "Produce a structured test report with PASS or FAIL verdict."
