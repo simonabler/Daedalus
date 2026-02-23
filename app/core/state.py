@@ -134,6 +134,11 @@ class GraphState(BaseModel):
     # Convenience: detected circular import paths (each path = list[str])
     dep_cycles: list[list[str]] = Field(default_factory=list)
 
+    # ── Code smells ───────────────────────────────────────────────────
+    # Populated by context_loader_node. Each entry is a CodeSmell.model_dump().
+    # Sorted: errors first, then warnings, then info.
+    code_smells: list[dict[str, Any]] = Field(default_factory=list)
+
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0
     completed_items: int = 0

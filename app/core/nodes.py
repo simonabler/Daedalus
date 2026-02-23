@@ -709,6 +709,25 @@ def context_loader_node(state: GraphState) -> dict:
     except Exception as exc:
         logger.warning("Dependency graph analysis failed (skipping): %s", exc)
 
+    # -- Code smell detection (best-effort, never blocks the workflow) --------
+    code_smells: list[dict] = []
+    try:
+        from app.analysis.smell_detector import SmellDetector, format_smells_for_prompt
+
+        emit_status("planner", "Detecting code smells…", **_progress_meta(state, "planning"))
+        detector = SmellDetector(repo_path, call_graph=call_graph)
+        raw_smells = detector.detect()
+        code_smells = [s.model_dump() for s in raw_smells]
+        err_count  = sum(1 for s in raw_smells if s.severity == "error")
+        warn_count = sum(1 for s in raw_smells if s.severity == "warning")
+        emit_status(
+            "planner",
+            f"Code smell detection complete: {err_count} error(s), {warn_count} warning(s), {len(raw_smells)} total",
+            **_progress_meta(state, "planning"),
+        )
+    except Exception as exc:
+        logger.warning("Code smell detection failed (skipping): %s", exc)
+
     emit_status(
         "planner",
         f"Repository context loaded: {summary}",
@@ -726,6 +745,7 @@ def context_loader_node(state: GraphState) -> dict:
         "call_graph": call_graph,
         "dependency_graph": dependency_graph,
         "dep_cycles": dep_cycles,
+        "code_smells": code_smells,
     }
 
 
@@ -884,6 +904,22 @@ def _format_call_graph_for_prompt(
         return format_call_graph_for_prompt(cg, max_entries=max_entries)
     except Exception as exc:
         logger.debug("Could not format call graph for prompt: %s", exc)
+        return ""
+
+
+def _format_code_smells_for_prompt(
+    code_smells: list[dict],
+    max_smells: int = 10,
+) -> str:
+    """Format a list of serialised CodeSmell dicts into a compact prompt section."""
+    if not code_smells:
+        return ""
+    try:
+        from app.analysis.smell_detector import CodeSmell, format_smells_for_prompt
+        smells = [CodeSmell(**s) for s in code_smells]
+        return format_smells_for_prompt(smells, max_smells=max_smells)
+    except Exception as exc:
+        logger.debug("Could not format code smells for prompt: %s", exc)
         return ""
 
 
@@ -1180,6 +1216,8 @@ def planner_plan_node(state: GraphState) -> dict:
         context_parts.append(_format_call_graph_for_prompt(state.call_graph))
     if state.dependency_graph:
         context_parts.append(_format_dep_graph_for_prompt(state.dependency_graph))
+    if state.code_smells:
+        context_parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=10))
     if state.context_listing:
         context_parts.append(
             "Repository listing (depth<=2):\n"
@@ -1449,6 +1487,8 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=10))
     if state.dependency_graph:
         prompt_parts.append(_format_dep_graph_for_prompt(state.dependency_graph, max_entries=5))
+    if state.code_smells:
+        prompt_parts.append(_format_code_smells_for_prompt(state.code_smells, max_smells=5))
     if state.agent_instructions:
         prompt_parts.append(
             "**Repository Documentation (excerpt)**:\n"

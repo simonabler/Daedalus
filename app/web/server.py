@@ -291,6 +291,21 @@ async def get_status():
     )
 
 
+@app.get("/api/code-smells")
+async def get_code_smells():
+    """Return code smell findings for the current repo."""
+    if not _current_state or not _current_state.code_smells:
+        return {"smells": [], "total": 0, "errors": 0, "warnings": 0, "infos": 0}
+    smells = _current_state.code_smells
+    return {
+        "smells": smells,
+        "total": len(smells),
+        "errors":   sum(1 for s in smells if s.get("severity") == "error"),
+        "warnings": sum(1 for s in smells if s.get("severity") == "warning"),
+        "infos":    sum(1 for s in smells if s.get("severity") == "info"),
+    }
+
+
 @app.get("/api/dependency-graph")
 async def get_dependency_graph():
     """Return the dependency graph for the current repo as JSON + Mermaid."""
