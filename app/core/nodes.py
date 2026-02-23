@@ -689,6 +689,26 @@ def context_loader_node(state: GraphState) -> dict:
     except Exception as exc:
         logger.warning("Call graph analysis failed (skipping): %s", exc)
 
+    # -- Dependency graph analysis (best-effort, never blocks the workflow) --
+    dependency_graph: dict = {}
+    dep_cycles: list = []
+    try:
+        from app.analysis.dependency_graph import DependencyAnalyzer, format_dep_graph_for_prompt
+
+        emit_status("planner", "Building dependency graph…", **_progress_meta(state, "planning"))
+        dep_analyzer = DependencyAnalyzer(repo_path)
+        dg = dep_analyzer.analyze()
+        dependency_graph = dg.to_dict()
+        dep_cycles = dg.cycles
+        cycle_msg = f", {len(dg.cycles)} cycle(s) detected" if dg.cycles else ""
+        emit_status(
+            "planner",
+            f"Dependency graph ready: {len(dg.all_modules())} modules{cycle_msg}",
+            **_progress_meta(state, "planning"),
+        )
+    except Exception as exc:
+        logger.warning("Dependency graph analysis failed (skipping): %s", exc)
+
     emit_status(
         "planner",
         f"Repository context loaded: {summary}",
@@ -704,6 +724,8 @@ def context_loader_node(state: GraphState) -> dict:
         "context_loaded": True,
         "static_issues": static_issues,
         "call_graph": call_graph,
+        "dependency_graph": dependency_graph,
+        "dep_cycles": dep_cycles,
     }
 
 
@@ -862,6 +884,22 @@ def _format_call_graph_for_prompt(
         return format_call_graph_for_prompt(cg, max_entries=max_entries)
     except Exception as exc:
         logger.debug("Could not format call graph for prompt: %s", exc)
+        return ""
+
+
+def _format_dep_graph_for_prompt(
+    dependency_graph: dict,
+    max_entries: int = 8,
+) -> str:
+    """Format a serialised DependencyGraph dict into a concise prompt section."""
+    if not dependency_graph:
+        return ""
+    try:
+        from app.analysis.dependency_graph import DependencyGraph, format_dep_graph_for_prompt
+        dg = DependencyGraph.from_dict(dependency_graph)
+        return format_dep_graph_for_prompt(dg, max_cycles=max_entries)
+    except Exception as exc:
+        logger.debug("Could not format dependency graph for prompt: %s", exc)
         return ""
 
 
@@ -1140,6 +1178,8 @@ def planner_plan_node(state: GraphState) -> dict:
         context_parts.append(_format_static_issues_for_prompt(state.static_issues))
     if state.call_graph:
         context_parts.append(_format_call_graph_for_prompt(state.call_graph))
+    if state.dependency_graph:
+        context_parts.append(_format_dep_graph_for_prompt(state.dependency_graph))
     if state.context_listing:
         context_parts.append(
             "Repository listing (depth<=2):\n"
@@ -1407,6 +1447,8 @@ def coder_node(state: GraphState) -> dict:
         prompt_parts.append(_format_static_issues_for_prompt(state.static_issues, max_issues=10))
     if state.call_graph:
         prompt_parts.append(_format_call_graph_for_prompt(state.call_graph, max_entries=10))
+    if state.dependency_graph:
+        prompt_parts.append(_format_dep_graph_for_prompt(state.dependency_graph, max_entries=5))
     if state.agent_instructions:
         prompt_parts.append(
             "**Repository Documentation (excerpt)**:\n"

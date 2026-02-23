@@ -291,6 +291,25 @@ async def get_status():
     )
 
 
+@app.get("/api/dependency-graph")
+async def get_dependency_graph():
+    """Return the dependency graph for the current repo as JSON + Mermaid."""
+    if not _current_state or not _current_state.dependency_graph:
+        return {"mermaid": "", "json": {}, "cycles": [], "modules": 0}
+    try:
+        from app.analysis.dependency_graph import DependencyGraph
+        dg = DependencyGraph.from_dict(_current_state.dependency_graph)
+        return {
+            "mermaid": dg.to_mermaid(highlight_cycles=True),
+            "json": _current_state.dependency_graph,
+            "cycles": dg.cycles,
+            "modules": len(dg.all_modules()),
+            "edges": sum(len(v) for v in dg.imports.values()),
+        }
+    except Exception as exc:
+        return {"error": str(exc), "mermaid": "", "json": {}, "cycles": []}
+
+
 @app.get("/api/events")
 async def get_events(limit: int = 200):
     """Return recent workflow events."""

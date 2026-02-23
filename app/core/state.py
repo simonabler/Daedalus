@@ -127,6 +127,13 @@ class GraphState(BaseModel):
     # Keys: callers, callees, file_map, language, files_analysed, parse_errors
     call_graph: dict[str, Any] = Field(default_factory=dict)
 
+    # ── Dependency graph ──────────────────────────────────────────────
+    # Populated by context_loader_node. Serialised DependencyGraph.to_dict().
+    # Keys: imports, importers, cycles, coupling_scores, language, ...
+    dependency_graph: dict[str, Any] = Field(default_factory=dict)
+    # Convenience: detected circular import paths (each path = list[str])
+    dep_cycles: list[list[str]] = Field(default_factory=list)
+
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0
     completed_items: int = 0
