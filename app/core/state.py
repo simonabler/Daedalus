@@ -42,6 +42,7 @@ class WorkflowPhase(StrEnum):
     IDLE = "idle"
     ROUTING = "routing"
     LOADING_CONTEXT = "loading_context"
+    ANALYZING = "analyzing"
     PLANNING = "planning"
     CODING = "coding"
     PEER_REVIEWING = "peer_reviewing"    # cross-coder review
@@ -138,6 +139,11 @@ class GraphState(BaseModel):
     # Populated by context_loader_node. Each entry is a CodeSmell.model_dump().
     # Sorted: errors first, then warnings, then info.
     code_smells: list[dict[str, Any]] = Field(default_factory=list)
+
+    # ── Code intelligence cache ───────────────────────────────────────
+    # Set by code_intelligence_node. Tracks whether analysis was loaded from cache.
+    intelligence_cache_key: str = ""      # git commit hash used as cache key
+    intelligence_cached: bool = False     # True = results loaded from cache
 
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0

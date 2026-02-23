@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from app.core.logging import get_logger
 from app.core.nodes import (
     answer_gate_node,
+    code_intelligence_node,
     coder_node,
     committer_node,
     context_loader_node,
@@ -167,6 +168,7 @@ def build_graph() -> StateGraph:
 
     graph.add_node("router", router_node)
     graph.add_node("context", context_loader_node)
+    graph.add_node("intelligence", code_intelligence_node)
     graph.add_node("status", status_node)
     graph.add_node("research", research_node)
     graph.add_node("resume", resume_node)
@@ -188,7 +190,8 @@ def build_graph() -> StateGraph:
         route_after_router,
         {"status": "status", "research": "research", "resume": "resume", "context": "context", "stopped": END},
     )
-    graph.add_edge("context", "planner")
+    graph.add_edge("context", "intelligence")
+    graph.add_edge("intelligence", "planner")
     graph.add_edge("status", END)
     graph.add_edge("research", END)
     graph.add_conditional_edges(

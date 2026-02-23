@@ -291,6 +291,41 @@ async def get_status():
     )
 
 
+@app.get("/api/intelligence-summary")
+async def get_intelligence_summary():
+    """Return a compact summary of all code intelligence results."""
+    if not _current_state:
+        return {"available": False}
+    s = _current_state
+    smells = s.code_smells or []
+    static = s.static_issues or []
+    cg     = s.call_graph or {}
+    dg     = s.dependency_graph or {}
+    return {
+        "available": bool(smells or static or cg or dg),
+        "cached": s.intelligence_cached,
+        "cache_key": s.intelligence_cache_key,
+        "static": {
+            "total": len(static),
+            "errors":   sum(1 for i in static if i.get("severity") == "error"),
+            "warnings": sum(1 for i in static if i.get("severity") == "warning"),
+        },
+        "smells": {
+            "total": len(smells),
+            "errors":   sum(1 for i in smells if i.get("severity") == "error"),
+            "warnings": sum(1 for i in smells if i.get("severity") == "warning"),
+        },
+        "call_graph": {
+            "functions": len(cg.get("callees", {})),
+            "edges": sum(len(v) for v in cg.get("callees", {}).values()),
+        },
+        "dependency_graph": {
+            "modules": len(dg.get("imports", {})),
+            "cycles":  len(s.dep_cycles or []),
+        },
+    }
+
+
 @app.get("/api/code-smells")
 async def get_code_smells():
     """Return code smell findings for the current repo."""
