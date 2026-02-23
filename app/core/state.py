@@ -52,6 +52,7 @@ class WorkflowPhase(StrEnum):
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     WAITING_FOR_ANSWER = "waiting_for_answer"
     COMMITTING = "committing"
+    DOCUMENTING = "documenting"
     COMPLETE = "complete"
     STOPPED = "stopped"
 
