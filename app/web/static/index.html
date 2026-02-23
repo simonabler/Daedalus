@@ -295,6 +295,117 @@
   }
   .btn-answer:hover { opacity: 0.85; }
   .btn-answer:disabled { opacity: 0.4; cursor: default; }
+
+  /* ── Intel button ─────────────────────── */
+  .intel-btn {
+    padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border-light);
+    background: var(--surface2); color: var(--accent); font-family: var(--font);
+    font-size: 11px; font-weight: 700; cursor: pointer; transition: background 0.15s;
+    letter-spacing: 0.5px;
+  }
+  .intel-btn:hover { background: var(--surface3); }
+  .intel-btn.active { background: var(--accent-dim); border-color: var(--accent); }
+
+  /* ── Intelligence Panel ───────────────── */
+  .intel-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 100vw;
+    background: var(--surface); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; z-index: 100; overflow: hidden;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+    animation: slide-in-right 0.2s ease;
+  }
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to   { transform: translateX(0);   opacity: 1; }
+  }
+  .intel-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; background: var(--surface2);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .intel-title { flex: 1; font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 1.5px; }
+  .intel-cache-badge {
+    font-size: 9px; padding: 2px 7px; border-radius: 8px;
+    background: var(--surface3); color: var(--text-dim); font-weight: 700;
+  }
+  .intel-refresh, .intel-close {
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    font-size: 14px; padding: 2px 5px; border-radius: 4px; transition: color 0.15s;
+    font-family: var(--font);
+  }
+  .intel-refresh:hover, .intel-close:hover { color: var(--text); }
+  .intel-body { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .intel-body::-webkit-scrollbar { width: 4px; }
+  .intel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .intel-loading { color: var(--text-dim); font-size: 12px; padding: 20px 0; text-align: center; }
+  .intel-empty { color: var(--text-faint); font-size: 11px; text-align: center; padding: 40px 0; }
+
+  /* Intel sections */
+  .intel-section { border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+  .intel-section-hdr {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; background: var(--surface2);
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    cursor: pointer; user-select: none;
+  }
+  .intel-section-hdr:hover { background: var(--surface3); }
+  .intel-section-hdr .s-icon { font-size: 13px; }
+  .intel-section-hdr .s-title { flex: 1; }
+  .intel-section-hdr .s-count {
+    padding: 1px 7px; border-radius: 8px; font-size: 9px; font-weight: 800;
+  }
+  .s-count-error { background: var(--red-dim); color: var(--red); }
+  .s-count-warning { background: var(--yellow-dim); color: var(--yellow); }
+  .s-count-ok { background: var(--green-dim); color: var(--green); }
+  .s-count-info { background: var(--surface3); color: var(--text-dim); }
+  .intel-section-body { padding: 8px 0; }
+  .intel-section.collapsed .intel-section-body { display: none; }
+
+  /* Intel rows */
+  .intel-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 5px 12px; font-size: 11.5px; line-height: 1.5; border-bottom: 1px solid var(--border);
+  }
+  .intel-row:last-child { border-bottom: none; }
+  .intel-row .r-sev {
+    font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; margin-top: 2px;
+  }
+  .r-sev-error { background: var(--red-dim); color: var(--red); }
+  .r-sev-warning { background: var(--yellow-dim); color: var(--yellow); }
+  .r-sev-info { background: var(--surface3); color: var(--text-dim); }
+  .intel-row .r-text { flex: 1; color: var(--text); }
+  .intel-row .r-loc { color: var(--text-faint); font-size: 10px; }
+
+  /* Summary cards */
+  .intel-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 12px; }
+  .intel-card {
+    border-radius: 5px; padding: 8px 10px; background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+  .intel-card .c-label { font-size: 9px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.8px; }
+  .intel-card .c-value { font-size: 20px; font-weight: 700; color: var(--text); margin-top: 2px; }
+  .intel-card .c-sub { font-size: 9px; color: var(--text-dim); margin-top: 1px; }
+  .intel-card.c-err .c-value { color: var(--red); }
+  .intel-card.c-warn .c-value { color: var(--yellow); }
+  .intel-card.c-ok .c-value { color: var(--green); }
+  .intel-card.c-info .c-value { color: var(--accent); }
+
+  /* Cycle paths */
+  .cycle-path {
+    padding: 5px 12px; font-size: 11px; color: var(--red);
+    border-bottom: 1px solid var(--border); word-break: break-all;
+  }
+  .cycle-path:last-child { border-bottom: none; }
+
+  /* Coupling rows */
+  .coupling-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+    font-size: 11px; border-bottom: 1px solid var(--border);
+  }
+  .coupling-row:last-child { border-bottom: none; }
+  .coupling-bar-bg { flex: 1; height: 4px; background: var(--surface3); border-radius: 2px; }
+  .coupling-bar { height: 4px; border-radius: 2px; background: var(--accent); }
+  .coupling-score { font-size: 10px; color: var(--text-dim); width: 32px; text-align: right; }
 </style>
 </head>
 <body>
@@ -303,6 +414,7 @@
   <div class="header-status">
     <span class="progress-text" id="progressText">—</span>
     <span class="badge badge-idle" id="badge">IDLE</span>
+    <button class="intel-btn" id="intelBtn" onclick="toggleIntel()" title="Code Intelligence Dashboard">🧠 Intel</button>
   </div>
 </header>
 
@@ -313,6 +425,19 @@
   <div class="input-row">
     <input type="text" id="taskInput" placeholder="Describe a coding task…" autocomplete="off" />
     <button onclick="sendTask()">SEND</button>
+  </div>
+</div>
+
+<!-- Intelligence Dashboard Panel -->
+<div class="intel-panel" id="intelPanel" style="display:none">
+  <div class="intel-header">
+    <span class="intel-title">🧠 CODE INTELLIGENCE</span>
+    <span class="intel-cache-badge" id="intelCacheBadge"></span>
+    <button class="intel-refresh" onclick="loadIntelligence()" title="Refresh">↻</button>
+    <button class="intel-close" onclick="toggleIntel()" title="Close">✕</button>
+  </div>
+  <div class="intel-body" id="intelBody">
+    <div class="intel-loading">Loading intelligence data…</div>
   </div>
 </div>
 
@@ -675,6 +800,10 @@ function handleEvent(evt) {
           total: metadata.items_total,
           branch: metadata.branch || '',
         });
+        // Detect intelligence_complete event metadata
+        if (metadata.type === 'intelligence_complete') {
+          _onIntelligenceComplete();
+        }
       }
       break;
 
@@ -823,6 +952,179 @@ function sendTask() {
       .then(r => r.json()).then(d => addStatus(`✓ Task queued`))
       .catch(e => addStatus(`❌ Failed: ${e}`, 'status-error'));
   }
+}
+
+
+// ── Intelligence Dashboard ────────────────
+let _intelVisible = false;
+
+function toggleIntel() {
+  _intelVisible = !_intelVisible;
+  const panel = document.getElementById('intelPanel');
+  const btn   = document.getElementById('intelBtn');
+  panel.style.display = _intelVisible ? 'flex' : 'none';
+  btn.classList.toggle('active', _intelVisible);
+  if (_intelVisible) loadIntelligence();
+}
+
+async function loadIntelligence() {
+  const body = document.getElementById('intelBody');
+  const cacheBadge = document.getElementById('intelCacheBadge');
+  body.innerHTML = '<div class="intel-loading">Loading…</div>';
+
+  try {
+    const [summary, smells, depGraph] = await Promise.all([
+      fetch('/api/intelligence-summary').then(r => r.json()),
+      fetch('/api/code-smells').then(r => r.json()),
+      fetch('/api/dependency-graph').then(r => r.json()),
+    ]);
+
+    if (!summary.available) {
+      body.innerHTML = '<div class="intel-empty">No intelligence data available yet.<br>Start a task to analyse the repository.</div>';
+      cacheBadge.textContent = '';
+      return;
+    }
+
+    cacheBadge.textContent = summary.cached ? `CACHED @ ${summary.cache_key || '?'}` : 'LIVE';
+
+    const sections = [];
+
+    // ── Overview cards ─────────────────────────────────────────────
+    const staticErr  = summary.static?.errors  || 0;
+    const staticWarn = summary.static?.warnings || 0;
+    const smellErr   = summary.smells?.errors   || 0;
+    const smellWarn  = summary.smells?.warnings || 0;
+    const cycles     = summary.dependency_graph?.cycles || 0;
+    const funcs      = summary.call_graph?.functions || 0;
+
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-section-hdr" onclick="toggleSection(this)">
+          <span class="s-icon">📊</span><span class="s-title">Overview</span>
+        </div>
+        <div class="intel-section-body">
+          <div class="intel-cards">
+            <div class="intel-card ${staticErr > 0 ? 'c-err' : 'c-ok'}">
+              <div class="c-label">Static Errors</div>
+              <div class="c-value">${staticErr}</div>
+              <div class="c-sub">${staticWarn} warning(s)</div>
+            </div>
+            <div class="intel-card ${smellErr > 0 ? 'c-err' : smellWarn > 0 ? 'c-warn' : 'c-ok'}">
+              <div class="c-label">Code Smells</div>
+              <div class="c-value">${summary.smells?.total || 0}</div>
+              <div class="c-sub">${smellErr} error(s), ${smellWarn} warning(s)</div>
+            </div>
+            <div class="intel-card ${cycles > 0 ? 'c-err' : 'c-ok'}">
+              <div class="c-label">Dep Cycles</div>
+              <div class="c-value">${cycles}</div>
+              <div class="c-sub">${summary.dependency_graph?.modules || 0} modules</div>
+            </div>
+            <div class="intel-card c-info">
+              <div class="c-label">Functions</div>
+              <div class="c-value">${funcs}</div>
+              <div class="c-sub">${summary.call_graph?.edges || 0} call edges</div>
+            </div>
+          </div>
+        </div>
+      </div>`);
+
+    // ── Circular imports ────────────────────────────────────────────
+    const cycleList = depGraph.cycles || [];
+    if (cycleList.length > 0) {
+      const rows = cycleList.slice(0, 10).map(cycle =>
+        `<div class="cycle-path">⭮ ${esc(cycle.join(' → '))} → ${esc(cycle[0])}</div>`
+      ).join('');
+      const more = cycleList.length > 10
+        ? `<div class="cycle-path" style="color:var(--text-dim)">… and ${cycleList.length - 10} more</div>` : '';
+      sections.push(`
+        <div class="intel-section">
+          <div class="intel-section-hdr" onclick="toggleSection(this)">
+            <span class="s-icon">⭮</span><span class="s-title">Circular Imports</span>
+            <span class="s-count s-count-error">${cycleList.length}</span>
+          </div>
+          <div class="intel-section-body">${rows}${more}</div>
+        </div>`);
+    }
+
+    // ── Most-coupled modules ────────────────────────────────────────
+    const depJson = depGraph.json || {};
+    const couplingScores = depJson.coupling_scores || {};
+    const topCoupled = Object.entries(couplingScores)
+      .sort((a, b) => b[1] - a[1]).slice(0, 8);
+    if (topCoupled.length > 0) {
+      const rows = topCoupled.map(([mod, score]) => {
+        const pct = Math.round(score * 100);
+        return `
+          <div class="coupling-row">
+            <span style="flex:1;color:var(--text);font-size:11px;word-break:break-all">${esc(mod)}</span>
+            <div class="coupling-bar-bg"><div class="coupling-bar" style="width:${pct}%"></div></div>
+            <span class="coupling-score">${pct}%</span>
+          </div>`;
+      }).join('');
+      sections.push(`
+        <div class="intel-section">
+          <div class="intel-section-hdr" onclick="toggleSection(this)">
+            <span class="s-icon">🔗</span><span class="s-title">Most Coupled Modules</span>
+          </div>
+          <div class="intel-section-body">${rows}</div>
+        </div>`);
+    }
+
+    // ── Code smells ─────────────────────────────────────────────────
+    const allSmells = smells.smells || [];
+    if (allSmells.length > 0) {
+      const shown = allSmells.slice(0, 20);
+      const rows = shown.map(s => {
+        const sevClass = s.severity === 'error' ? 'r-sev-error'
+                       : s.severity === 'warning' ? 'r-sev-warning' : 'r-sev-info';
+        return `
+          <div class="intel-row">
+            <span class="r-sev ${sevClass}">${s.severity.toUpperCase()}</span>
+            <span class="r-text">
+              <strong>${esc(s.smell_type)}</strong> — ${esc(s.description)}
+              ${s.suggestion ? `<br><span style="color:var(--text-dim);font-size:10.5px">💡 ${esc(s.suggestion)}</span>` : ''}
+            </span>
+            <span class="r-loc">${esc(s.file)}:${s.line}</span>
+          </div>`;
+      }).join('');
+      const more = allSmells.length > 20
+        ? `<div class="intel-row" style="color:var(--text-faint)">… and ${allSmells.length - 20} more</div>` : '';
+      const errCount  = smells.errors   || 0;
+      const warnCount = smells.warnings || 0;
+      const countClass = errCount > 0 ? 's-count-error' : warnCount > 0 ? 's-count-warning' : 's-count-ok';
+      sections.push(`
+        <div class="intel-section">
+          <div class="intel-section-hdr" onclick="toggleSection(this)">
+            <span class="s-icon">🔍</span><span class="s-title">Code Smells</span>
+            <span class="s-count ${countClass}">${allSmells.length}</span>
+          </div>
+          <div class="intel-section-body">${rows}${more}</div>
+        </div>`);
+    }
+
+    body.innerHTML = sections.join('') || '<div class="intel-empty">All clear — no issues detected.</div>';
+
+  } catch (err) {
+    body.innerHTML = `<div class="intel-empty">Failed to load intelligence data.<br><small style="color:var(--text-faint)">${esc(String(err))}</small></div>`;
+    console.error('intel load error:', err);
+  }
+}
+
+function toggleSection(hdr) {
+  hdr.closest('.intel-section').classList.toggle('collapsed');
+}
+
+// Auto-refresh intel panel on intelligence_complete event
+function _onIntelligenceComplete() {
+  if (_intelVisible) loadIntelligence();
+  // Flash the button to signal new data
+  const btn = document.getElementById('intelBtn');
+  btn.style.background = 'var(--green-dim)';
+  btn.style.color = 'var(--green)';
+  setTimeout(() => {
+    btn.style.background = '';
+    btn.style.color = '';
+  }, 2000);
 }
 
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTask(); });
