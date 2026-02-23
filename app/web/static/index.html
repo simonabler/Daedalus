@@ -82,6 +82,30 @@
   .msg-status.status-error { border-left-color: var(--red); background: var(--red-dim); color: var(--red); }
   .msg-status.status-complete { border-left-color: var(--green); background: var(--green-dim); color: var(--green); font-weight: 700; }
 
+  /* Streaming token blocks — live typewriter output */
+  .msg-stream {
+    align-self: flex-start; padding: 10px 14px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 6px;
+    color: var(--text); font-size: 12.5px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    max-width: 95%; width: 100%;
+  }
+  .msg-stream .stream-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px; font-size: 11px; color: var(--text-dim);
+  }
+  .msg-stream .stream-body { color: var(--text); }
+  .stream-cursor {
+    display: inline-block; width: 2px; height: 1em;
+    background: var(--accent); margin-left: 1px;
+    vertical-align: text-bottom;
+    animation: blink 0.8s step-end infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  .msg-stream.stream-done { border-left-color: var(--border); }
+  .msg-stream.stream-done .stream-cursor { display: none; }
+
   /* Collapsible detail blocks — for agent internals */
   .msg-detail {
     align-self: flex-start; max-width: 95%; width: 100%;
@@ -450,6 +474,10 @@ const progressText = document.getElementById('progressText');
 // Track open detail blocks to group tool calls
 let currentDetailBlock = null;
 let currentDetailTools = null;
+// Track open streaming block (live token output)
+let currentStreamBlock = null;
+let currentStreamAgent = null;
+let currentStreamBody = null;
 
 // ── Agent tag colors ─────────────────────
 const TAG_CLASS = {
@@ -489,6 +517,66 @@ function addUser(text) {
   div.textContent = text;
   chat.appendChild(div);
   scrollBottom();
+}
+
+// ── Append a streaming token to the live stream block ───
+function appendToken(agent, token) {
+  // Create a new stream block if agent changed or none exists
+  if (!currentStreamBlock || currentStreamAgent !== agent) {
+    // Finalise any previous stream block
+    if (currentStreamBlock) {
+      currentStreamBlock.classList.add('stream-done');
+    }
+
+    const block = document.createElement('div');
+    block.className = 'msg msg-stream';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'stream-header';
+
+    const tag = document.createElement('span');
+    tag.className = `agent-tag ${TAG_CLASS[agent] || 'tag-system'}`;
+    tag.textContent = AGENT_NAMES[agent] || agent;
+
+    const label = document.createElement('span');
+    label.textContent = '● streaming…';
+
+    hdr.appendChild(tag);
+    hdr.appendChild(label);
+    block.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'stream-body';
+
+    const cursor = document.createElement('span');
+    cursor.className = 'stream-cursor';
+    body.appendChild(cursor);
+
+    block.appendChild(body);
+    chat.appendChild(block);
+
+    currentStreamBlock = block;
+    currentStreamAgent = agent;
+    currentStreamBody = body;
+    currentDetailBlock = null;
+    currentDetailTools = null;
+  }
+
+  // Insert token before the cursor
+  const cursor = currentStreamBody.querySelector('.stream-cursor');
+  const textNode = document.createTextNode(token);
+  currentStreamBody.insertBefore(textNode, cursor);
+  scrollBottom();
+}
+
+// ── Finalise any open streaming block ────
+function finaliseStream() {
+  if (currentStreamBlock) {
+    currentStreamBlock.classList.add('stream-done');
+    currentStreamBlock = null;
+    currentStreamAgent = null;
+    currentStreamBody = null;
+  }
 }
 
 // ── Add a collapsible detail block ───────
@@ -879,17 +967,27 @@ function handleEvent(evt) {
       if (detail) addDetail(agent, title, detail);
       break;
 
+    case 'agent_token':
+      // Streaming token chunk — append to live block
+      appendToken(agent, title);
+      break;
+
     case 'agent_think':
+      // Finalise any open stream before showing thinking block
+      finaliseStream();
       // Collapsible: agent is thinking
       addDetail(agent, title, detail || '(processing…)');
       break;
 
     case 'agent_result':
-      // Collapsible: agent response
+      // Finalise streaming block, then show result in collapsible
+      finaliseStream();
       addDetail(agent, title, detail);
       break;
 
     case 'tool_call':
+      // Streaming pauses during tool execution — finalise the stream block
+      finaliseStream();
       addToolCall(agent, detail ? title.replace(`🔧 ${agent} → `, '') : title, detail, '');
       break;
 
