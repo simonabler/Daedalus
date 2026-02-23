@@ -51,6 +51,7 @@ class EventCategory(str, Enum):
     NODE_END = "node_end"
     AGENT_THINK = "agent_think"
     AGENT_RESULT = "agent_result"
+    AGENT_TOKEN = "agent_token"     # streaming token chunk
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PLAN = "plan"
@@ -181,6 +182,15 @@ def emit_agent_result(agent: str, result: str, truncate: int = 2000) -> None:
         agent=agent,
         title=f"💬 {agent} responded",
         detail=detail,
+    ))
+
+
+def emit_agent_token(agent: str, token: str) -> None:
+    """Emit a single streaming token chunk from an agent."""
+    emit(WorkflowEvent(
+        category=EventCategory.AGENT_TOKEN,
+        agent=agent,
+        title=token,
     ))
 
 
