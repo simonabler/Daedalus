@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     token_budget_soft_limit_usd: float = 0.0
     token_budget_hard_limit_usd: float = 0.0
 
+    # Context window management
+    # Trigger message-history compression when this fraction of the model's
+    # context window is estimated to be used. 0.0 = never compress.
+    context_warn_fraction: float = 0.75
+    # Number of most-recent messages always kept intact during compression.
+    context_keep_recent_messages: int = 6
+    # Hard limit on a single tool result's char count before it enters all_messages.
+    # Prevents one large read_file call from consuming the context window.
+    tool_result_max_chars: int = 8_000
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/agent.log"

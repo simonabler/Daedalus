@@ -27,6 +27,7 @@ from app.core.events import (
     emit_approval_needed,
     emit_coder_question,
     emit_commit,
+    emit_context_usage,
     emit_error,
     emit_node_end,
     emit_node_start,
@@ -61,6 +62,14 @@ from app.core.token_budget import (
     TokenUsageRecord,
     calculate_cost,
     extract_token_usage,
+)
+from app.core.context_window import (
+    CONTEXT_WARN_FRACTION,
+    compress_messages,
+    context_limit_for_model,
+    context_usage_fraction,
+    estimate_messages_tokens,
+    truncate_tool_result,
 )
 from app.tools.build import run_linter, run_tests
 from app.tools.filesystem import list_directory, read_file, write_file
@@ -237,10 +246,18 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
     If budget is provided, token usage is tracked after each LLM response
     and a BudgetExceededException is raised when the hard limit is hit.
+
+    Context window management (always active):
+    - Tool results are truncated to settings.tool_result_max_chars before
+      being appended to all_messages (preventive).
+    - After each LLM response, context usage is estimated. If it exceeds
+      settings.context_warn_fraction of the model limit, old turns are
+      compressed via an LLM summary call (reactive).
     """
     llm = get_llm(role)
     model_name = _model_name_for_role(role)
     system_prompt = load_system_prompt(role)
+    settings = get_settings()
 
     # Inject shared memory into system prompt for coders/reviewers
     if inject_memory:
@@ -256,6 +273,14 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
     prompt_summary = messages[-1].content[:300] if messages else ""
     emit_agent_thinking(role, prompt_summary)
+
+    # -- (a) Warn if initial context is already large ----------------------
+    initial_fraction = context_usage_fraction(all_messages, model_name)
+    if initial_fraction > 0.5:
+        emit_status(
+            "system",
+            f"ℹ️ Initial context at {initial_fraction:.0%} of {model_name} limit",
+        )
 
     max_tool_rounds = 15
     for _round_num in range(max_tool_rounds):
@@ -306,6 +331,30 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
         all_messages.append(response)
 
+        # -- (c) Context check + compression after each LLM turn -----------
+        ctx_limit    = context_limit_for_model(model_name)
+        ctx_tokens   = estimate_messages_tokens(all_messages)
+        ctx_fraction = ctx_tokens / ctx_limit
+        emit_context_usage(role, ctx_tokens, ctx_limit, ctx_fraction)
+
+        warn_fraction = settings.context_warn_fraction
+        if warn_fraction > 0 and ctx_fraction >= warn_fraction:
+            emit_status(
+                "system",
+                f"⚠️ Context at {ctx_fraction:.0%} ({ctx_tokens:,} / {ctx_limit:,} tok)"
+                " — compressing old turns",
+            )
+            all_messages = compress_messages(all_messages, model_name, llm)
+            new_tokens   = estimate_messages_tokens(all_messages)
+            new_fraction = new_tokens / ctx_limit
+            emit_context_usage(role, new_tokens, ctx_limit, new_fraction, compressed=True)
+            emit_status(
+                "system",
+                f"✅ Context compressed: {ctx_tokens:,} → {new_tokens:,} tok"
+                f" ({new_fraction:.0%})",
+            )
+        # ------------------------------------------------------------------
+
         if not response.tool_calls:
             result = response.content if isinstance(response.content, str) else str(response.content)
             emit_agent_result(role, result)
@@ -330,7 +379,12 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
             emit_tool_result(role, tc["name"], str(result))
             logger.info("tool_call  | %s(%s) -> %d chars", tc["name"], list(tc["args"].keys()), len(str(result)))
-            all_messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+
+            # -- (b) Truncate tool result before entering all_messages -----
+            safe_result = truncate_tool_result(
+                str(result), max_chars=settings.tool_result_max_chars
+            )
+            all_messages.append(ToolMessage(content=safe_result, tool_call_id=tc["id"]))
 
     emit_error(role, "Exceeded maximum tool call rounds (15)")
     return "ERROR: Exceeded maximum tool call rounds."

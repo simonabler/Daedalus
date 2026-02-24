@@ -102,6 +102,11 @@
   .cost-btn.cost-soft  { background: var(--yellow-dim); color: var(--yellow); border-color: var(--yellow); }
   .cost-btn.cost-hard  { background: var(--red-dim);    color: var(--red);    border-color: var(--red);    animation: pulse 1s infinite; }
 
+  /* Context window indicator button */
+  .ctx-btn { font-variant-numeric: tabular-nums; min-width: 68px; }
+  .ctx-btn.ctx-warn { background: var(--yellow-dim); color: var(--yellow); border-color: var(--yellow); }
+  .ctx-btn.ctx-high { background: var(--red-dim);    color: var(--red);    border-color: var(--red); }
+
   /* Cost breakdown modal */
   .cost-modal {
     position: fixed; inset: 0; background: rgba(0,0,0,.6);
@@ -497,7 +502,8 @@
   <div class="header-status">
     <span class="progress-text" id="progressText">—</span>
     <span class="badge badge-idle" id="badge">IDLE</span>
-    <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget & cost breakdown" style="display:none">💰 $0.0000</button>
+    <button class="intel-btn ctx-btn" id="ctxBtn" title="Context window usage" style="display:none">📊 0%</button>
+    <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget &amp; cost breakdown" style="display:none">💰 $0.0000</button>
     <button class="intel-btn" id="intelBtn" onclick="toggleIntel()" title="Code Intelligence Dashboard">🧠 Intel</button>
   </div>
 </header>
@@ -590,6 +596,27 @@ function addUser(text) {
   div.textContent = text;
   chat.appendChild(div);
   scrollBottom();
+}
+
+// ── Context window indicator ──────────────────────────────
+function updateContextIndicator(eventData) {
+  const meta = eventData.metadata || {};
+  const fraction = meta.fraction ?? 0;
+  const pct = Math.round(fraction * 100);
+
+  const btn = document.getElementById('ctxBtn');
+  if (!btn) return;
+  btn.style.display = '';
+  btn.textContent = `📊 ${pct}%`;
+
+  btn.classList.remove('ctx-warn', 'ctx-high');
+  if (fraction >= 0.75)      btn.classList.add('ctx-high');
+  else if (fraction >= 0.50) btn.classList.add('ctx-warn');
+
+  // Update tooltip with details
+  const estTok = (meta.estimated_tokens ?? 0).toLocaleString();
+  const limTok = (meta.model_limit ?? 0).toLocaleString();
+  btn.title = `Context: ${pct}% (${estTok} / ${limTok} tokens)${meta.compressed ? ' — compressed' : ''}`;
 }
 
 // ── Token budget / cost tracking ─────────────────────────
@@ -1182,6 +1209,11 @@ function handleEvent(evt) {
     case 'token_usage':
       // Update cost indicator in header
       updateCostIndicator(data);
+      break;
+
+    case 'context_usage':
+      // Update context window indicator in header
+      updateContextIndicator(data);
       break;
 
     case 'agent_think':

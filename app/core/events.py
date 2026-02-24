@@ -54,6 +54,7 @@ class EventCategory(str, Enum):
     AGENT_TOKEN = "agent_token"     # streaming token chunk
     AGENT_RESPONSE = "agent_response"   # final visible conversational reply
     TOKEN_USAGE = "token_usage"         # per-call token/cost metrics
+    CONTEXT_USAGE = "context_usage"     # context window utilisation check
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PLAN = "plan"
@@ -193,6 +194,28 @@ def emit_agent_token(agent: str, token: str) -> None:
         category=EventCategory.AGENT_TOKEN,
         agent=agent,
         title=token,
+    ))
+
+
+def emit_context_usage(
+    agent: str,
+    estimated_tokens: int,
+    model_limit: int,
+    fraction: float,
+    compressed: bool = False,
+) -> None:
+    """Emit a context-window utilisation event."""
+    suffix = " → compressed" if compressed else ""
+    emit(WorkflowEvent(
+        category=EventCategory.CONTEXT_USAGE,
+        agent=agent,
+        title=f"📊 Context: {fraction:.0%} ({estimated_tokens:,} / {model_limit:,} tok){suffix}",
+        metadata={
+            "estimated_tokens": estimated_tokens,
+            "model_limit":       model_limit,
+            "fraction":          round(fraction, 3),
+            "compressed":        compressed,
+        },
     ))
 
 
