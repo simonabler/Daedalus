@@ -30,6 +30,8 @@ logger = get_logger("web.server")
 
 # ── In-memory state ───────────────────────────────────────────────────────
 _current_state: GraphState | None = None
+# Latest context-usage summary — updated by the context_usage event listener
+_context_usage_summary: dict = {}
 _ws_clients: set[WebSocket] = set()
 _task_queue: asyncio.Queue | None = None
 
@@ -49,6 +51,7 @@ class StatusResponse(BaseModel):
     items_total: int
     items_done: int
     token_budget: dict = {}
+    context_usage: dict = {}
 
 
 class ApprovalRequest(BaseModel):
@@ -63,6 +66,21 @@ class AnswerRequest(BaseModel):
 
 async def _broadcast_event(event: WorkflowEvent) -> None:
     """Forward a workflow event to all connected WebSocket clients."""
+    global _context_usage_summary
+
+    # Track latest context usage for /api/status
+    if event.category.value == "context_usage" and event.metadata:
+        meta = event.metadata
+        compressed_count = _context_usage_summary.get("compressed_count", 0)
+        if meta.get("compressed"):
+            compressed_count += 1
+        _context_usage_summary = {
+            "estimated_tokens": meta.get("estimated_tokens", 0),
+            "model_limit":       meta.get("model_limit", 0),
+            "fraction":          meta.get("fraction", 0.0),
+            "compressed_count":  compressed_count,
+        }
+
     if not _ws_clients:
         return
 
@@ -290,6 +308,7 @@ async def get_status():
         items_total=len(_current_state.todo_items),
         items_done=_current_state.completed_items,
         token_budget=_current_state.token_budget or {},
+        context_usage=_context_usage_summary,
     )
 
 
