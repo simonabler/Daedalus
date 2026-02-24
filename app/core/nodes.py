@@ -20,6 +20,7 @@ from app.agents.models import get_llm, load_system_prompt
 from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import (
+    emit_agent_response,
     emit_agent_result,
     emit_agent_thinking,
     emit_agent_token,
@@ -1360,14 +1361,45 @@ def _format_repo_context_for_prompt(repo_facts: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def status_node(state: GraphState) -> dict:
-    """Non-coding status response branch (no write/git tools)."""
+    """Non-coding status/conversational response branch (no write/git tools).
+
+    Handles questions like "who are you?", "what can you do?", "what's the
+    status?", etc. Uses an LLM to generate a contextual answer and emits it
+    visibly to the UI via emit_agent_result so the user sees the reply.
+    """
     emit_node_start("planner", "Status", item_desc=state.user_request[:100])
+
+    # Include current workflow state as context
     summary = state.get_progress_summary()
-    message = f"Workflow status:\n{summary}"
-    emit_status("planner", "Status request handled without coding", **_progress_meta(state, "complete"))
-    emit_node_end("planner", "Status", "Status response prepared")
+
+    # Prepend context to the user message so the LLM has full picture
+    context_prefix = (
+        "You are Daedalus, an autonomous AI coding agent. "
+        "You help developers by autonomously cloning, analysing, coding, testing, "
+        "and documenting software repositories. "
+        "You use a dual-coder system (Claude + GPT) with peer review, human approval "
+        "gates, checkpoint/resume, and a code intelligence pipeline.\n\n"
+        "Answer the user's question conversationally. "
+        "If it's about workflow status, use the context below. "
+        "Keep your answer concise (3-6 sentences). Do not ask follow-up questions.\n\n"
+        f"Current workflow state:\n{summary}\n\n"
+        f"User question: {state.user_request}"
+    )
+
+    answer = _invoke_agent(
+        "planner",
+        [HumanMessage(content=context_prefix)],
+        tools=None,
+        inject_memory=False,
+    )
+
+    # Emit the answer as a visible response — shown as an expanded reply bubble,
+    # not a collapsible. The agent_result keeps it in the log too.
+    emit_agent_response("planner", answer)
+
+    emit_node_end("planner", "Status", "Response sent")
     return {
-        "planner_response": message,
+        "planner_response": answer,
         "phase": WorkflowPhase.COMPLETE,
         "stop_reason": "status_answered",
         "input_intent": "status",
@@ -1384,7 +1416,8 @@ def research_node(state: GraphState) -> dict:
         f"User request:\n{state.user_request}\n"
     )
     answer = _invoke_agent("planner", [HumanMessage(content=prompt)])
-    emit_status("planner", "Research request handled without coding", **_progress_meta(state, "complete"))
+    # Emit the answer as a visible response — shown as an expanded reply bubble
+    emit_agent_response("planner", answer)
     emit_node_end("planner", "Research", "Research response prepared")
     return {
         "planner_response": answer,
