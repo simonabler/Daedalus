@@ -82,6 +82,21 @@
   .msg-status.status-error { border-left-color: var(--red); background: var(--red-dim); color: var(--red); }
   .msg-status.status-complete { border-left-color: var(--green); background: var(--green-dim); color: var(--green); font-weight: 700; }
 
+  /* Agent response bubble — visible reply from status/research nodes */
+  .msg-response {
+    align-self: flex-start; padding: 12px 16px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-left: 3px solid var(--purple); border-radius: 6px;
+    color: var(--text); font-size: 13px; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word;
+    max-width: 95%; width: 100%;
+  }
+  .msg-response .resp-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .msg-response .resp-body { color: var(--text); }
+
   /* Streaming token blocks — live typewriter output */
   .msg-stream {
     align-self: flex-start; padding: 10px 14px;
@@ -516,6 +531,34 @@ function addUser(text) {
   div.className = 'msg msg-user';
   div.textContent = text;
   chat.appendChild(div);
+  scrollBottom();
+}
+
+// ── Add a visible agent response bubble ─────────────────
+function addResponse(agent, body) {
+  finaliseStream();
+  currentDetailBlock = null;
+  currentDetailTools = null;
+
+  const block = document.createElement('div');
+  block.className = 'msg msg-response';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'resp-header';
+
+  const tag = document.createElement('span');
+  tag.className = `agent-tag ${TAG_CLASS[agent] || 'tag-system'}`;
+  tag.textContent = AGENT_NAMES[agent] || agent;
+
+  hdr.appendChild(tag);
+  block.appendChild(hdr);
+
+  const bodyDiv = document.createElement('div');
+  bodyDiv.className = 'resp-body';
+  bodyDiv.textContent = body;
+  block.appendChild(bodyDiv);
+
+  chat.appendChild(block);
   scrollBottom();
 }
 
@@ -970,6 +1013,11 @@ function handleEvent(evt) {
     case 'agent_token':
       // Streaming token chunk — append to live block
       appendToken(agent, title);
+      break;
+
+    case 'agent_response':
+      // Visible conversational reply from status/research nodes
+      addResponse(agent, detail);
       break;
 
     case 'agent_think':

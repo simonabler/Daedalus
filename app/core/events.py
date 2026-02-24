@@ -52,6 +52,7 @@ class EventCategory(str, Enum):
     AGENT_THINK = "agent_think"
     AGENT_RESULT = "agent_result"
     AGENT_TOKEN = "agent_token"     # streaming token chunk
+    AGENT_RESPONSE = "agent_response"   # final visible conversational reply
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PLAN = "plan"
@@ -191,6 +192,20 @@ def emit_agent_token(agent: str, token: str) -> None:
         category=EventCategory.AGENT_TOKEN,
         agent=agent,
         title=token,
+    ))
+
+
+def emit_agent_response(agent: str, text: str) -> None:
+    """Emit a visible conversational reply (status/research nodes).
+
+    Unlike emit_agent_result (which is hidden in a collapsible), this event
+    is rendered as an auto-expanded reply bubble in the Web UI.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.AGENT_RESPONSE,
+        agent=agent,
+        title=f"💬 {agent}",
+        detail=text,
     ))
 
 
