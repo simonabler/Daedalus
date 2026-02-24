@@ -161,7 +161,7 @@ class TestDocumenterNodeLLMPath:
             clear_listeners()
 
         mock_llm.assert_called_once()
-        assert result == {}  # documenter never mutates state
+        assert result.get("phase") is None  # documenter never mutates phase
 
     def test_llm_called_with_documenter_role(self):
         from app.core.nodes import documenter_node
@@ -221,7 +221,7 @@ class TestDocumenterNodeLLMPath:
         assert len(prompt_content) < 10000
 
     def test_documenter_does_not_mutate_phase(self):
-        """documenter_node must return {} — it never changes phase or state."""
+        """documenter_node never changes phase or workflow state — only updates token_budget."""
         from app.core.nodes import documenter_node
         from app.core.events import clear_listeners
 
@@ -235,7 +235,9 @@ class TestDocumenterNodeLLMPath:
             result = documenter_node(state)
             clear_listeners()
 
-        assert result == {}
+        # documenter must never set phase, stop_reason, or other workflow keys
+        assert result.get("phase") is None
+        assert result.get("stop_reason") is None
 
 
 # ---------------------------------------------------------------------------

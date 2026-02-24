@@ -32,6 +32,7 @@ from app.core.events import (
     emit_node_start,
     emit_plan,
     emit_status,
+    emit_token_usage,
     emit_tool_call,
     emit_tool_result,
     emit_verdict,
@@ -54,6 +55,13 @@ from app.core.task_routing import (
     record_agent_outcome,
     select_agent_thompson,
 )
+from app.core.token_budget import (
+    BudgetExceededException,
+    TokenBudget,
+    TokenUsageRecord,
+    calculate_cost,
+    extract_token_usage,
+)
 from app.tools.build import run_linter, run_tests
 from app.tools.filesystem import list_directory, read_file, write_file
 from app.tools.git import git_command, git_commit_and_push, git_create_branch, git_status
@@ -63,6 +71,21 @@ from app.tools.terminal import run_terminal
 logger = get_logger("core.nodes")
 
 CHECKBOX_RE = re.compile(r"^- \[(?P<mark>[ xX])\]\s*(?:Item\s+\d+:\s*)?(?P<desc>.+)$")
+
+
+def _model_name_for_role(role: str) -> str:
+    """Return the configured model name for a given agent role."""
+    settings = get_settings()
+    mapping = {
+        "planner":    settings.planner_model,
+        "coder_a":    settings.coder_1_model,
+        "coder_b":    settings.coder_2_model,
+        "reviewer_a": settings.coder_1_model,
+        "reviewer_b": settings.coder_2_model,
+        "documenter": settings.documenter_model,
+        "tester":     settings.tester_model,
+    }
+    return mapping.get(role, settings.planner_model)
 ROUTER_INTENTS = {"code", "status", "research", "resume"}
 
 
@@ -200,7 +223,9 @@ def _stream_llm_round(
 
 
 def _invoke_agent(role: str, messages: list, tools: list | None = None,
-                  inject_memory: bool = False) -> str:
+                  inject_memory: bool = False,
+                  budget: TokenBudget | None = None,
+                  node: str = "") -> str:
     """Invoke an LLM agent, handle tool calls, emit events.
 
     Streaming is enabled automatically for roles in _STREAMING_ROLES.
@@ -209,8 +234,12 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
 
     If inject_memory=True, the shared long-term memory is prepended to the
     system prompt so the agent can use established conventions.
+
+    If budget is provided, token usage is tracked after each LLM response
+    and a BudgetExceededException is raised when the hard limit is hit.
     """
     llm = get_llm(role)
+    model_name = _model_name_for_role(role)
     system_prompt = load_system_prompt(role)
 
     # Inject shared memory into system prompt for coders/reviewers
@@ -234,6 +263,46 @@ def _invoke_agent(role: str, messages: list, tools: list | None = None,
             response = _stream_llm_round(role, llm_with_tools, all_messages)
         else:
             response = llm_with_tools.invoke(all_messages)
+
+        # -- Token tracking ------------------------------------------------
+        if budget is not None:
+            usage = extract_token_usage(response)
+            cost = calculate_cost(model_name, usage["prompt_tokens"], usage["completion_tokens"])
+            record = TokenUsageRecord(
+                agent=role,
+                model=model_name,
+                prompt_tokens=usage["prompt_tokens"],
+                completion_tokens=usage["completion_tokens"],
+                total_tokens=usage["total_tokens"],
+                cost_usd=cost,
+                node=node,
+            )
+            try:
+                budget.add(record)
+                emit_token_usage(
+                    agent=role,
+                    model=model_name,
+                    prompt_tokens=usage["prompt_tokens"],
+                    completion_tokens=usage["completion_tokens"],
+                    cost_usd=cost,
+                    total_cost_usd=budget.total_cost_usd,
+                )
+                if budget.soft_limit_hit and usage["prompt_tokens"] > 0:
+                    # Emit soft-limit warning exactly once (flag stays True)
+                    emit_status(
+                        "system",
+                        f"⚠️ Token budget soft limit reached: "
+                        f"${budget.total_cost_usd:.4f} >= ${budget.soft_limit_usd:.2f}. "
+                        "Workflow continues.",
+                    )
+            except BudgetExceededException as exc:
+                emit_error(
+                    "system",
+                    f"❌ Hard budget limit exceeded: ${exc.total_cost:.4f} >= ${exc.limit:.2f}. "
+                    "Stopping workflow.",
+                )
+                raise
+        # ------------------------------------------------------------------
 
         all_messages.append(response)
 
@@ -328,6 +397,50 @@ def _candidate_agents_for_task(task_type: str) -> list[str]:
     if task_type == "testing":
         return ["coder_b", "coder_a"]
     return ["coder_a", "coder_b"]
+
+
+def _get_budget(state: GraphState) -> TokenBudget:
+    """Reconstruct the live TokenBudget from the serialised state dict.
+
+    Also applies the configured soft/hard limits from settings so they are
+    always up-to-date even after a checkpoint restore.
+    """
+    settings = get_settings()
+    budget = TokenBudget.from_dict(state.token_budget) if state.token_budget else TokenBudget()
+    budget.soft_limit_usd = settings.token_budget_soft_limit_usd
+    budget.hard_limit_usd = settings.token_budget_hard_limit_usd
+    return budget
+
+
+def _budget_dict(budget: TokenBudget) -> dict:
+    """Serialise budget back to a plain dict for GraphState storage."""
+    return budget.to_dict()
+
+
+def _invoke_with_budget(
+    state: GraphState,
+    role: str,
+    messages: list,
+    tools: list | None = None,
+    inject_memory: bool = False,
+    node: str = "",
+) -> tuple[str, dict]:
+    """Call _invoke_agent with budget tracking.
+
+    Returns (result_str, {"token_budget": updated_dict}).
+    The caller merges the second element into its return dict so the
+    GraphState budget accumulates across nodes.
+
+    On BudgetExceededException the node should stop the workflow.
+    """
+    budget = _get_budget(state)
+    result = _invoke_agent(
+        role, messages, tools,
+        inject_memory=inject_memory,
+        budget=budget,
+        node=node,
+    )
+    return result, {"token_budget": _budget_dict(budget)}
 
 
 def _progress_meta(state: GraphState, phase: str, done_override: int | None = None) -> dict:
@@ -1861,7 +1974,10 @@ def coder_node(state: GraphState) -> dict:
     messages.append(HumanMessage(content="\n\n".join(prompt_parts)))
 
     tools = DOCUMENTER_TOOLS if active == "documenter" else CODER_TOOLS
-    result = _invoke_agent(active, messages, tools, inject_memory=True)
+    try:
+        result, budget_update = _invoke_with_budget(state, active, messages, tools, inject_memory=True, node="coder")
+    except BudgetExceededException:
+        return {"phase": WorkflowPhase.STOPPED, "stop_reason": "budget_hard_limit_exceeded"}
 
     # Detect ask_human signal — coder wants to pause for human input
     question_payload = _parse_coder_question(result)
@@ -1900,6 +2016,7 @@ def coder_node(state: GraphState) -> dict:
         "coder_question_options": [],
         "coder_question_asked_by": "",
         "coder_question_answer": "",
+        **budget_update,
     }
     _save_checkpoint_snapshot(state, updates, "code_complete")
     return updates
@@ -1955,8 +2072,13 @@ def peer_review_node(state: GraphState) -> dict:
     )
 
     # inject_memory=True ? reviewer sees established conventions
-    result = _invoke_agent(reviewer, [HumanMessage(content=prompt)],
-                           REVIEWER_TOOLS, inject_memory=True)
+    try:
+        result, budget_update = _invoke_with_budget(
+            state, reviewer, [HumanMessage(content=prompt)],
+            REVIEWER_TOOLS, inject_memory=True, node="peer_review",
+        )
+    except BudgetExceededException:
+        return {"phase": WorkflowPhase.STOPPED, "stop_reason": "budget_hard_limit_exceeded"}
 
     verdict = "APPROVE" if "APPROVE" in result.upper() else "REWORK"
     if "**Verdict**: REWORK" in result or "Verdict: REWORK" in result:
@@ -1993,6 +2115,7 @@ def peer_review_node(state: GraphState) -> dict:
         "peer_review_verdict": verdict,
         "peer_review_notes": result,
         "phase": phase,
+        **budget_update,
     }
 
 
@@ -2248,7 +2371,12 @@ def tester_node(state: GraphState) -> dict:
         "command not found), report that clearly — do NOT attempt to install packages."
     )
 
-    result = _invoke_agent("tester", [HumanMessage(content=prompt)], TESTER_TOOLS)
+    try:
+        result, budget_update = _invoke_with_budget(
+            state, "tester", [HumanMessage(content=prompt)], TESTER_TOOLS, node="tester",
+        )
+    except BudgetExceededException:
+        return {"phase": WorkflowPhase.STOPPED, "stop_reason": "budget_hard_limit_exceeded"}
 
     # -- Classify the raw LLM output ----------------------------------------
     if "**Verdict**: PASS" in result or "Verdict: PASS" in result:
@@ -2278,6 +2406,7 @@ def tester_node(state: GraphState) -> dict:
                 "last_test_result": result,
                 "stop_reason": "env_setup_failed",
                 "phase": WorkflowPhase.STOPPED,
+                **budget_update,
             }
 
         emit_status(
@@ -2290,6 +2419,7 @@ def tester_node(state: GraphState) -> dict:
         return {
             "last_test_result": result,
             "phase": WorkflowPhase.ENV_FIXING,
+            **budget_update,
         }
 
     # -- Normal PASS / FAIL -------------------------------------------------
@@ -2302,7 +2432,7 @@ def tester_node(state: GraphState) -> dict:
         if item.test_fail_count >= get_settings().max_rework_cycles_per_item:
             msg = f"Item {item.id} failed tests {item.test_fail_count} times; stopping to avoid loop."
             emit_error("tester", msg)
-            return {"stop_reason": msg, "phase": WorkflowPhase.STOPPED}
+            return {"stop_reason": msg, "phase": WorkflowPhase.STOPPED, **budget_update}
         emit_status(
             "tester",
             f"❌ Tests FAILED - sending back to {_coder_label(state.active_coder)}",
@@ -2317,6 +2447,7 @@ def tester_node(state: GraphState) -> dict:
         "last_test_result": result,
         "env_fix_attempts": 0,  # reset on successful test run (pass or genuine fail)
         "phase": WorkflowPhase.DECIDING if llm_verdict == "PASS" else WorkflowPhase.CODING,
+        **budget_update,
     }
     if llm_verdict == "PASS":
         _save_checkpoint_snapshot(state, updates, "test_pass")
@@ -2770,12 +2901,14 @@ def documenter_node(state: GraphState) -> dict:
         "then make the necessary updates. Output your structured summary when done."
     )
 
-    result = _invoke_agent(
-        "documenter",
-        [HumanMessage(content=prompt)],
-        DOCUMENTER_TOOLS,
-        inject_memory=False,
-    )
+    try:
+        result, budget_update = _invoke_with_budget(
+            state, "documenter", [HumanMessage(content=prompt)],
+            DOCUMENTER_TOOLS, node="documenter",
+        )
+    except BudgetExceededException:
+        emit_node_end("documenter", "Documenting", "Budget limit exceeded — skipping documentation")
+        return {}
 
     emit_node_end("documenter", "Documenting", result[:400] if result else "Documentation updated")
-    return {}
+    return {**budget_update}

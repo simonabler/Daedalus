@@ -48,6 +48,7 @@ class StatusResponse(BaseModel):
     error: str
     items_total: int
     items_done: int
+    token_budget: dict = {}
 
 
 class ApprovalRequest(BaseModel):
@@ -288,6 +289,7 @@ async def get_status():
         error=_current_state.error_message,
         items_total=len(_current_state.todo_items),
         items_done=_current_state.completed_items,
+        token_budget=_current_state.token_budget or {},
     )
 
 

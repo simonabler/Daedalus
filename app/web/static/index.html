@@ -97,6 +97,50 @@
   }
   .msg-response .resp-body { color: var(--text); }
 
+  /* Cost button colour states */
+  .cost-btn { font-variant-numeric: tabular-nums; min-width: 90px; }
+  .cost-btn.cost-soft  { background: var(--yellow-dim); color: var(--yellow); border-color: var(--yellow); }
+  .cost-btn.cost-hard  { background: var(--red-dim);    color: var(--red);    border-color: var(--red);    animation: pulse 1s infinite; }
+
+  /* Cost breakdown modal */
+  .cost-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center; z-index: 200;
+  }
+  .cost-modal-box {
+    background: var(--surface1); border: 1px solid var(--border);
+    border-radius: 10px; width: min(540px, 95vw); max-height: 80vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .cost-modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-weight: 700; font-size: 14px; color: var(--text);
+  }
+  .cost-modal-header button {
+    background: none; border: none; color: var(--text-dim);
+    cursor: pointer; font-size: 16px;
+  }
+  .cost-modal-header button:hover { color: var(--text); }
+  .cost-modal-body { padding: 18px; overflow-y: auto; font-size: 13px; }
+  .cost-summary { margin-bottom: 16px; }
+  .cost-summary .cost-total {
+    font-size: 28px; font-weight: 700; color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .cost-summary .cost-meta { color: var(--text-dim); margin-top: 4px; }
+  .cost-table { width: 100%; border-collapse: collapse; }
+  .cost-table th {
+    text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 600;
+    color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cost-table td { padding: 7px 10px; border-bottom: 1px solid var(--surface3); }
+  .cost-table tr:last-child td { border-bottom: none; }
+  .cost-table .cost-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cost-limit-warn  { color: var(--yellow); font-weight: 600; margin-top: 12px; }
+  .cost-limit-error { color: var(--red);    font-weight: 600; margin-top: 12px; }
+
   /* Streaming token blocks — live typewriter output */
   .msg-stream {
     align-self: flex-start; padding: 10px 14px;
@@ -453,6 +497,7 @@
   <div class="header-status">
     <span class="progress-text" id="progressText">—</span>
     <span class="badge badge-idle" id="badge">IDLE</span>
+    <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget & cost breakdown" style="display:none">💰 $0.0000</button>
     <button class="intel-btn" id="intelBtn" onclick="toggleIntel()" title="Code Intelligence Dashboard">🧠 Intel</button>
   </div>
 </header>
@@ -464,6 +509,19 @@
   <div class="input-row">
     <input type="text" id="taskInput" placeholder="Describe a coding task…" autocomplete="off" />
     <button onclick="sendTask()">SEND</button>
+  </div>
+</div>
+
+<!-- Cost Breakdown Modal -->
+<div class="cost-modal" id="costModal" style="display:none">
+  <div class="cost-modal-box">
+    <div class="cost-modal-header">
+      <span>💰 Token Budget &amp; Cost</span>
+      <button onclick="toggleCostModal()" title="Close">✕</button>
+    </div>
+    <div class="cost-modal-body" id="costModalBody">
+      <p style="color:var(--text-dim);text-align:center">No data yet.</p>
+    </div>
   </div>
 </div>
 
@@ -533,6 +591,97 @@ function addUser(text) {
   chat.appendChild(div);
   scrollBottom();
 }
+
+// ── Token budget / cost tracking ─────────────────────────
+let _totalCostUsd = 0;
+let _costData = null;  // latest budget summary from events or /api/status
+
+function updateCostIndicator(eventData) {
+  const meta = eventData.metadata || {};
+  _totalCostUsd = meta.total_cost_usd ?? _totalCostUsd;
+  _costData = meta;
+
+  const btn = document.getElementById('costBtn');
+  if (!btn) return;
+  btn.style.display = '';
+  btn.textContent = `💰 $${_totalCostUsd.toFixed(4)}`;
+
+  // Colour state (soft / hard limit)
+  btn.classList.remove('cost-soft', 'cost-hard');
+  if (meta.hard_limit_hit) btn.classList.add('cost-hard');
+  else if (meta.soft_limit_hit) btn.classList.add('cost-soft');
+}
+
+function toggleCostModal() {
+  const modal = document.getElementById('costModal');
+  if (modal.style.display === 'none') {
+    renderCostModal();
+    modal.style.display = 'flex';
+  } else {
+    modal.style.display = 'none';
+  }
+}
+
+function renderCostModal() {
+  const body = document.getElementById('costModalBody');
+  if (!_costData && _totalCostUsd === 0) {
+    body.innerHTML = '<p style="color:var(--text-dim);text-align:center">No token data recorded yet.</p>';
+    return;
+  }
+
+  const total     = _totalCostUsd;
+  const totalTok  = (_costData?.total_tokens) ?? 0;
+  const softHit   = _costData?.soft_limit_hit;
+  const hardHit   = _costData?.hard_limit_hit;
+  const softLim   = _costData?.soft_limit_usd ?? 0;
+  const hardLim   = _costData?.hard_limit_usd ?? 0;
+  const perAgent  = _costData?.per_agent ?? {};
+
+  let html = `
+    <div class="cost-summary">
+      <div class="cost-total">$${total.toFixed(4)}</div>
+      <div class="cost-meta">${totalTok.toLocaleString()} tokens total</div>
+      ${softHit ? `<div class="cost-limit-warn">⚠️ Soft limit hit ($${softLim.toFixed(2)})</div>` : ''}
+      ${hardHit ? `<div class="cost-limit-error">❌ Hard limit hit ($${hardLim.toFixed(2)})</div>` : ''}
+    </div>
+    <table class="cost-table">
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th class="cost-num">Calls</th>
+          <th class="cost-num">Prompt</th>
+          <th class="cost-num">Completion</th>
+          <th class="cost-num">Cost (USD)</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  const agents = Object.keys(perAgent).sort();
+  for (const ag of agents) {
+    const d = perAgent[ag];
+    html += `
+      <tr>
+        <td><span class="agent-tag ${TAG_CLASS[ag] || 'tag-system'}">${AGENT_NAMES[ag] || ag}</span></td>
+        <td class="cost-num">${d.calls ?? 0}</td>
+        <td class="cost-num">${(d.prompt_tokens ?? 0).toLocaleString()}</td>
+        <td class="cost-num">${(d.completion_tokens ?? 0).toLocaleString()}</td>
+        <td class="cost-num">$${(d.cost_usd ?? 0).toFixed(4)}</td>
+      </tr>`;
+  }
+
+  if (agents.length === 0) {
+    html += '<tr><td colspan="5" style="text-align:center;color:var(--text-dim)">No calls recorded yet.</td></tr>';
+  }
+
+  html += `</tbody></table>`;
+  body.innerHTML = html;
+}
+
+// Close cost modal on backdrop click
+document.addEventListener('click', e => {
+  const modal = document.getElementById('costModal');
+  if (modal && e.target === modal) modal.style.display = 'none';
+});
 
 // ── Add a visible agent response bubble ─────────────────
 function addResponse(agent, body) {
@@ -931,6 +1080,16 @@ function handleEvent(evt) {
           total: metadata.items_total,
           branch: metadata.branch || '',
         });
+        // Sync token budget from status metadata if present
+        if (metadata.token_budget) {
+          _costData = metadata.token_budget;
+          _totalCostUsd = metadata.token_budget.total_cost_usd ?? _totalCostUsd;
+          const btn = document.getElementById('costBtn');
+          if (btn && _totalCostUsd > 0) {
+            btn.style.display = '';
+            btn.textContent = `💰 $${_totalCostUsd.toFixed(4)}`;
+          }
+        }
         // Detect intelligence_complete event metadata
         if (metadata.type === 'intelligence_complete') {
           _onIntelligenceComplete();
@@ -1018,6 +1177,11 @@ function handleEvent(evt) {
     case 'agent_response':
       // Visible conversational reply from status/research nodes
       addResponse(agent, detail);
+      break;
+
+    case 'token_usage':
+      // Update cost indicator in header
+      updateCostIndicator(data);
       break;
 
     case 'agent_think':

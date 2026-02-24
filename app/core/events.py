@@ -53,6 +53,7 @@ class EventCategory(str, Enum):
     AGENT_RESULT = "agent_result"
     AGENT_TOKEN = "agent_token"     # streaming token chunk
     AGENT_RESPONSE = "agent_response"   # final visible conversational reply
+    TOKEN_USAGE = "token_usage"         # per-call token/cost metrics
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     PLAN = "plan"
@@ -192,6 +193,30 @@ def emit_agent_token(agent: str, token: str) -> None:
         category=EventCategory.AGENT_TOKEN,
         agent=agent,
         title=token,
+    ))
+
+
+def emit_token_usage(
+    agent: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cost_usd: float,
+    total_cost_usd: float,
+) -> None:
+    """Emit per-call token consumption and cost metrics."""
+    emit(WorkflowEvent(
+        category=EventCategory.TOKEN_USAGE,
+        agent=agent,
+        title=f"💰 {agent}: {prompt_tokens}+{completion_tokens} tok (${cost_usd:.4f})",
+        metadata={
+            "prompt_tokens":     prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens":      prompt_tokens + completion_tokens,
+            "cost_usd":          round(cost_usd, 6),
+            "total_cost_usd":    round(total_cost_usd, 6),
+            "model":             model,
+        },
     ))
 
 
