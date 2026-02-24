@@ -20,6 +20,7 @@ from app.core.nodes import (
     learn_from_review_node,
     peer_review_node,
     planner_decide_node,
+    planner_env_fix_node,
     planner_plan_node,
     planner_review_node,
     research_node,
@@ -91,6 +92,8 @@ def _route_after_resume(state: GraphState) -> str:
         return "commit"
     if state.phase == WorkflowPhase.DOCUMENTING:
         return "documenter"
+    if state.phase == WorkflowPhase.ENV_FIXING:
+        return "env_fix"
     return "complete"
 
 
@@ -99,6 +102,11 @@ def _route_after_coder(state: GraphState) -> str:
         return "stopped"
     if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
         return "answer_gate"
+    # Env-fix items (ops tasks prepended by planner_env_fix) skip peer review
+    # and go straight back to tester so the fix can be verified immediately.
+    current = state.current_item
+    if current is not None and current.task_type == "ops" and current.id.startswith("env_fix_"):
+        return "tester"
     return "peer_review"
 
 
@@ -138,9 +146,22 @@ def _route_after_planner_review(state: GraphState) -> str:
 def _route_after_tester(state: GraphState) -> str:
     if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
+    if state.phase == WorkflowPhase.ENV_FIXING:
+        return "env_fix"
     if state.phase == WorkflowPhase.CODING:
         return "coder"
     return "decide"
+
+
+def _route_after_env_fix(state: GraphState) -> str:
+    """After planner_env_fix creates the fix item, always go to coder.
+
+    Env-fix items skip peer review — they are mechanical installs, not
+    creative coding tasks. The coder goes directly back to tester after.
+    """
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
+        return "stopped"
+    return "coder"
 
 
 def _route_after_decide(state: GraphState) -> str:
@@ -193,6 +214,7 @@ def build_graph() -> StateGraph:
     graph.add_node("human_gate", human_gate_node)
     graph.add_node("commit", committer_node)
     graph.add_node("documenter", documenter_node)
+    graph.add_node("env_fix", planner_env_fix_node)
 
     graph.set_entry_point("router")
 
@@ -208,13 +230,13 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "resume",
         _route_after_resume,
-        {"coder": "coder", "answer_gate": "answer_gate", "commit": "commit", "documenter": "documenter", "complete": END, "stopped": END},
+        {"coder": "coder", "answer_gate": "answer_gate", "commit": "commit", "documenter": "documenter", "env_fix": "env_fix", "complete": END, "stopped": END},
     )
     graph.add_conditional_edges("planner", _route_after_plan, {"coder": "coder", "stopped": END})
     graph.add_conditional_edges(
         "coder",
         _route_after_coder,
-        {"answer_gate": "answer_gate", "peer_review": "peer_review", "stopped": END},
+        {"answer_gate": "answer_gate", "peer_review": "peer_review", "tester": "tester", "stopped": END},
     )
     graph.add_conditional_edges(
         "answer_gate",
@@ -232,7 +254,14 @@ def build_graph() -> StateGraph:
         _route_after_planner_review,
         {"tester": "tester", "coder": "coder", "stopped": END},
     )
-    graph.add_conditional_edges("tester", _route_after_tester, {"decide": "decide", "coder": "coder", "stopped": END})
+    graph.add_conditional_edges(
+        "tester",
+        _route_after_tester,
+        {"decide": "decide", "coder": "coder", "env_fix": "env_fix", "stopped": END},
+    )
+    graph.add_conditional_edges(
+        "env_fix", _route_after_env_fix, {"coder": "coder", "stopped": END}
+    )
     graph.add_conditional_edges("decide", _route_after_decide, {"human_gate": "human_gate", "stopped": END})
     graph.add_conditional_edges("human_gate", _route_after_human_gate, {"commit": "commit", "stopped": END})
     graph.add_conditional_edges("commit", _route_after_commit, {"documenter": "documenter", "complete": END})

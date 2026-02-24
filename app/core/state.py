@@ -53,6 +53,7 @@ class WorkflowPhase(StrEnum):
     WAITING_FOR_ANSWER = "waiting_for_answer"
     COMMITTING = "committing"
     DOCUMENTING = "documenting"
+    ENV_FIXING = "env_fixing"   # planner is creating an env-setup fix item
     COMPLETE = "complete"
     STOPPED = "stopped"
 
@@ -149,6 +150,7 @@ class GraphState(BaseModel):
     # ── Metadata ──────────────────────────────────────────────────────
     total_iterations: int = 0
     completed_items: int = 0
+    env_fix_attempts: int = 0   # number of env-fix rounds attempted for current item
 
     @property
     def current_item(self) -> TodoItem | None:

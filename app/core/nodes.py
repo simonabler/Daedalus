@@ -2156,8 +2156,68 @@ def planner_review_node(state: GraphState) -> dict:
 # NODE: tester
 # ---------------------------------------------------------------------------
 
+# Patterns in test/runner output that indicate an environment problem,
+# not a test failure. The tester detects these and hands off to planner_env_fix.
+_ENV_FAILURE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"command not found", re.IGNORECASE),
+    re.compile(r"'pytest'\s+is not recognized", re.IGNORECASE),
+    re.compile(r'The term ["\']pytest["\'] is not recognized', re.IGNORECASE),
+    re.compile(r"No module named\s+\S+", re.IGNORECASE),
+    re.compile(r"ModuleNotFoundError", re.IGNORECASE),
+    re.compile(r"ImportError", re.IGNORECASE),
+    re.compile(r"cannot import name", re.IGNORECASE),
+    re.compile(r"Cannot find module", re.IGNORECASE),          # Node.js
+    re.compile(r"error: externally-managed-environment", re.IGNORECASE),
+    re.compile(r"Could not find.*executable", re.IGNORECASE),
+    re.compile(r"No such file or directory.*python", re.IGNORECASE),
+    re.compile(r"python.*not found", re.IGNORECASE),
+    re.compile(r"node.*not found", re.IGNORECASE),
+]
+
+_TEST_PASS_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\d+ passed", re.IGNORECASE),
+    re.compile(r"All tests passed", re.IGNORECASE),
+    re.compile(r"Tests passed", re.IGNORECASE),
+    re.compile(r"OK\s*$", re.MULTILINE),
+]
+
+# Maximum env-fix rounds before giving up and routing to human gate
+_MAX_ENV_FIX_ATTEMPTS = 2
+
+
+def _is_env_failure(output: str) -> bool:
+    """Return True if the output indicates a missing/broken test environment."""
+    return any(pat.search(output) for pat in _ENV_FAILURE_PATTERNS)
+
+
+def _is_test_pass(output: str) -> bool:
+    """Return True if the output clearly indicates all tests passed (no failures)."""
+    has_failure = re.search(r"\d+\s+failed", output, re.IGNORECASE)
+    if has_failure:
+        return False
+    return any(pat.search(output) for pat in _TEST_PASS_PATTERNS)
+
+
+def _classify_test_output(output: str) -> str:
+    """Classify raw test runner output as 'pass', 'env_failure', or 'test_failure'."""
+    if _is_env_failure(output):
+        return "env_failure"
+    if _is_test_pass(output):
+        return "pass"
+    return "test_failure"
+
+
 def tester_node(state: GraphState) -> dict:
-    """Run tests and verification."""
+    """Run tests and verification.
+
+    Classifies the test runner output into three categories:
+    - pass        → advance to decide/human-gate
+    - test_failure → route back to coder for a fix
+    - env_failure  → route to planner_env_fix (never handled here)
+
+    The tester's job is to write, run, and analyse tests.
+    It never modifies the environment — that is the planner's responsibility.
+    """
     item = state.current_item
     if not item:
         emit_error("system", "No item to test")
@@ -2183,22 +2243,59 @@ def tester_node(state: GraphState) -> dict:
         prompt += f"\n\n{intelligence_ctx}"
     prompt += (
         "\nRun all tests, linters, and verification commands. "
-        "Produce a structured test report with PASS or FAIL verdict."
+        "Produce a structured test report with PASS or FAIL verdict. "
+        "If the test runner itself cannot start (missing interpreter, missing module, "
+        "command not found), report that clearly — do NOT attempt to install packages."
     )
 
     result = _invoke_agent("tester", [HumanMessage(content=prompt)], TESTER_TOOLS)
 
-    verdict = "PASS" if "PASS" in result.upper() and "FAIL" not in result.upper() else "FAIL"
+    # -- Classify the raw LLM output ----------------------------------------
     if "**Verdict**: PASS" in result or "Verdict: PASS" in result:
-        verdict = "PASS"
+        llm_verdict = "PASS"
     elif "**Verdict**: FAIL" in result or "Verdict: FAIL" in result:
-        verdict = "FAIL"
+        llm_verdict = "FAIL"
+    elif "PASS" in result.upper() and "FAIL" not in result.upper():
+        llm_verdict = "PASS"
+    else:
+        llm_verdict = "FAIL"
+
+    # Override: if output signals env failure, trust that over LLM verdict
+    classification = _classify_test_output(result)
 
     item.test_report = result
 
-    emit_verdict("tester", verdict, detail=result, item_id=item.id)
+    # -- ENV FAILURE: hand off to planner_env_fix ---------------------------
+    if classification == "env_failure":
+        if state.env_fix_attempts >= _MAX_ENV_FIX_ATTEMPTS:
+            msg = (
+                f"Environment setup failed after {state.env_fix_attempts} fix attempt(s). "
+                "Human intervention required."
+            )
+            emit_status("tester", f"❌ {msg}", **_progress_meta(state, "stopped"))
+            emit_node_end("tester", "Testing", msg)
+            return {
+                "last_test_result": result,
+                "stop_reason": "env_setup_failed",
+                "phase": WorkflowPhase.STOPPED,
+            }
 
-    if verdict == "FAIL":
+        emit_status(
+            "tester",
+            "⚠️ Tester: missing dependency or broken environment detected "
+            "— handing to planner for auto-fix",
+            **_progress_meta(state, "env_fixing"),
+        )
+        emit_node_end("tester", "Testing", "ENV_FAILURE — routing to planner_env_fix")
+        return {
+            "last_test_result": result,
+            "phase": WorkflowPhase.ENV_FIXING,
+        }
+
+    # -- Normal PASS / FAIL -------------------------------------------------
+    emit_verdict("tester", llm_verdict, detail=result, item_id=item.id)
+
+    if llm_verdict == "FAIL":
         item.test_fail_count += 1
         item.status = ItemStatus.IN_PROGRESS
         record_agent_outcome(state.repo_root, item.task_type, state.active_coder, success=False)
@@ -2214,20 +2311,126 @@ def tester_node(state: GraphState) -> dict:
     else:
         emit_status("tester", "✅ All tests PASSED", **_progress_meta(state, "deciding"))
 
-    emit_node_end("tester", "Testing", f"Verdict: {verdict}")
+    emit_node_end("tester", "Testing", f"Verdict: {llm_verdict}")
 
     updates = {
         "last_test_result": result,
-        "phase": WorkflowPhase.DECIDING if verdict == "PASS" else WorkflowPhase.CODING,
+        "env_fix_attempts": 0,  # reset on successful test run (pass or genuine fail)
+        "phase": WorkflowPhase.DECIDING if llm_verdict == "PASS" else WorkflowPhase.CODING,
     }
-    if verdict == "PASS":
+    if llm_verdict == "PASS":
         _save_checkpoint_snapshot(state, updates, "test_pass")
     return updates
 
 
 # ---------------------------------------------------------------------------
-# NODE: planner_decide
+# NODE: planner_env_fix
 # ---------------------------------------------------------------------------
+
+def planner_env_fix_node(state: GraphState) -> dict:
+    """Create a single env-setup fix item and prepend it to the plan.
+
+    Called when tester_node detects an environment failure (missing package,
+    command not found, etc.). This node:
+    1. Reads the tester's failure output from last_test_result
+    2. Uses an LLM to identify the exact missing package/tool
+    3. Creates one TodoItem: install the dependency or update config
+    4. Prepends it to todo_items so the coder handles it next
+    5. Routes to coder (skipping peer review — it's a mechanical fix)
+
+    Does NOT re-plan the entire task. Only creates the minimal fix item.
+    """
+    emit_node_start("planner", "EnvFix", item_desc="Diagnosing environment failure")
+    emit_status(
+        "planner",
+        "🔧 Planner: diagnosing missing dependency and creating fix item…",
+        **_progress_meta(state, "env_fixing"),
+    )
+
+    failure_output = state.last_test_result or "(no output captured)"
+    repo_facts_summary = ""
+    if state.repo_facts:
+        rf = state.repo_facts
+        lang = rf.get("tech_stack", {}).get("language", "unknown")
+        pm = rf.get("tech_stack", {}).get("package_manager", "unknown")
+        repo_facts_summary = f"Language: {lang}, Package manager: {pm}"
+
+    prompt = (
+        "## Environment Fix Task\n\n"
+        "The test runner failed due to a missing dependency or broken environment. "
+        "Your job is to create a single fix TodoItem to install or configure what is missing.\n\n"
+        f"**Test runner output (failure)**:\n```\n{failure_output[:3000]}\n```\n\n"
+        f"**Repository info**: {repo_facts_summary or 'unknown'}\n\n"
+        "Instructions:\n"
+        "1. Identify the exact missing package, module, or tool from the output above.\n"
+        "2. Determine the correct install command (pip install X, npm install X, "
+        "poetry add X, update pyproject.toml, etc.).\n"
+        "3. Respond with ONLY a JSON object in this exact format:\n"
+        "```json\n"
+        '{"description": "Install missing dependency X", '
+        '"command": "pip install X", '
+        '"reason": "ModuleNotFoundError: No module named X"}\n'
+        "```\n"
+        "Do not add explanation outside the JSON block."
+    )
+
+    raw = _invoke_agent("planner", [HumanMessage(content=prompt)], tools=None, inject_memory=False)
+
+    # Parse JSON from LLM response
+    fix_description = "Install missing test dependency"
+    fix_command = ""
+    try:
+        import json as _json
+        # Extract JSON block from response
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            parsed = _json.loads(raw[json_start:json_end])
+            fix_description = parsed.get("description", fix_description)
+            fix_command = parsed.get("command", "")
+    except Exception:
+        logger.warning("planner_env_fix | could not parse LLM JSON response: %s", raw[:200])
+
+    # Create the fix TodoItem with a unique id
+    fix_item = TodoItem(
+        id=f"env_fix_{state.env_fix_attempts + 1}",
+        description=fix_description,
+        task_type="ops",
+        acceptance_criteria=["Test environment is functional and tests can run"],
+        verification_commands=[fix_command] if fix_command else [],
+    )
+
+    # Assign the same coder that was active — env fixes skip peer review
+    fix_item.assigned_agent = state.active_coder
+    fix_item.assigned_reviewer = ""  # no review for mechanical env fixes
+
+    # Prepend fix item before the current item (so coder handles it next)
+    current_idx = state.current_item_index
+    new_items = (
+        list(state.todo_items[:current_idx])
+        + [fix_item]
+        + list(state.todo_items[current_idx:])
+    )
+
+    emit_status(
+        "planner",
+        f"🔧 Env fix item created: {fix_description}",
+        **_progress_meta(state, "env_fixing"),
+    )
+    emit_node_end("planner", "EnvFix", f"Fix item queued: {fix_description}")
+
+    return {
+        "todo_items": new_items,
+        "current_item_index": current_idx,  # points to fix_item now
+        "env_fix_attempts": state.env_fix_attempts + 1,
+        "phase": WorkflowPhase.CODING,
+        # Skip peer review for env-fix items — coder goes straight back to tester
+        "peer_review_verdict": "APPROVE",
+        "peer_review_notes": "Auto-approved: environment fix item, no peer review needed.",
+    }
+
+
+
 
 def planner_decide_node(state: GraphState) -> dict:
     """Mark item done, prepare commit."""
