@@ -152,6 +152,12 @@ class GraphState(BaseModel):
     completed_items: int = 0
     env_fix_attempts: int = 0   # number of env-fix rounds attempted for current item
 
+    # ── Token budget ──────────────────────────────────────────────────
+    # Stored as a plain dict (TokenBudget.to_dict()) so Pydantic can
+    # serialise/deserialise it for checkpoints without custom validators.
+    # Reconstruct with: TokenBudget.from_dict(state.token_budget)
+    token_budget: dict[str, Any] = Field(default_factory=dict)
+
     @property
     def current_item(self) -> TodoItem | None:
         if 0 <= self.current_item_index < len(self.todo_items):

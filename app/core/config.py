@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     shell_timeout_seconds: int = 120
     max_output_chars: int = 12_000
 
+    # Token budget / cost limits (USD). Set to 0.0 to disable.
+    # Soft limit: emits a ⚠️ warning in the UI but workflow continues.
+    # Hard limit: stops the workflow with stop_reason="budget_hard_limit_exceeded".
+    token_budget_soft_limit_usd: float = 0.0
+    token_budget_hard_limit_usd: float = 0.0
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/agent.log"
