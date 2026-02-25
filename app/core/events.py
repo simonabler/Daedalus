@@ -396,20 +396,28 @@ def emit_coder_question(
     context: str = "",
     options: list | None = None,
     item_id: str = "",
+    urgency: str = "blocking",
+    default_if_skipped: str = "",
 ) -> None:
     """Emit when a coder agent pauses mid-item to ask the human a critical question.
 
     Args:
-        asked_by:  The coder role (``"coder_a"`` or ``"coder_b"``).
-        question:  The question text the human must answer.
-        context:   Why the coder is asking (architectural context, trade-offs, etc.).
-        options:   Suggested answer choices (may be empty for open-ended questions).
-        item_id:   The current work item ID for traceability.
+        asked_by:           The coder role (``"coder_a"`` or ``"coder_b"``).
+        question:           The question text the human must answer.
+        context:            Why the coder is asking (architectural context, trade-offs, etc.).
+        options:            Suggested answer choices (may be empty for open-ended questions).
+        item_id:            The current work item ID for traceability.
+        urgency:            ``"blocking"`` (cannot proceed without answer) or
+                            ``"advisory"`` (has a sensible default to fall back on).
+        default_if_skipped: What the coder will do if the question is skipped.
+                            Only meaningful when ``urgency="advisory"``.
     """
+    urgency_safe = urgency if urgency in ("blocking", "advisory") else "blocking"
+    urgency_icon = "🔴" if urgency_safe == "blocking" else "🟡"
     emit(WorkflowEvent(
         category=EventCategory.CODER_QUESTION,
         agent=asked_by,
-        title=f"🤔 {asked_by} is asking a question",
+        title=f"{urgency_icon} {asked_by} is asking a question",
         detail=question,
         metadata={
             "question": question,
@@ -417,6 +425,9 @@ def emit_coder_question(
             "options": options or [],
             "asked_by": asked_by,
             "item_id": item_id,
+            "urgency": urgency_safe,
+            "urgency_icon": urgency_icon,
+            "default_if_skipped": default_if_skipped,
         },
     ))
 

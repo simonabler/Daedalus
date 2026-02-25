@@ -143,8 +143,10 @@ def _parse_coder_question(response: str) -> dict | None:
 
     return {
         "question": question,
-        "context": str(payload.get("context", "")).strip(),
-        "options": [str(o) for o in payload.get("options", []) if o],
+        "context":  str(payload.get("context", "")).strip(),
+        "options":  [str(o) for o in payload.get("options", []) if o],
+        "urgency":  payload.get("urgency", "blocking") if payload.get("urgency") in ("blocking", "advisory") else "blocking",
+        "default_if_skipped": str(payload.get("default_if_skipped", "")).strip(),
     }
 
 
@@ -2044,24 +2046,72 @@ def coder_node(state: GraphState) -> dict:
     # Detect ask_human signal — coder wants to pause for human input
     question_payload = _parse_coder_question(result)
     if question_payload:
-        emit_coder_question(
-            asked_by=active,
-            question=question_payload["question"],
-            context=question_payload["context"],
-            options=question_payload["options"],
-            item_id=item.id,
+        settings      = get_settings()
+        urgency       = question_payload["urgency"]
+        default_      = question_payload["default_if_skipped"]
+        cap           = settings.coder_question_max_per_item
+        mode          = settings.coder_question_advisory_mode
+        already_asked = item.coder_questions_asked
+
+        # Decide whether to skip this question
+        cap_reached        = already_asked >= cap
+        auto_skip_advisory = (urgency == "advisory" and mode == "auto_proceed")
+        skip               = cap_reached or auto_skip_advisory
+
+        # Always increment the per-item counter
+        updated_items = list(state.todo_items)
+        updated_items[state.current_item_index] = item.model_copy(
+            update={"coder_questions_asked": already_asked + 1}
         )
-        emit_node_end(active, "Coding", "Paused — coder is asking the human a question")
-        return {
-            "needs_coder_answer": True,
-            "coder_question": question_payload["question"],
-            "coder_question_context": question_payload["context"],
-            "coder_question_options": question_payload["options"],
-            "coder_question_asked_by": active,
-            "coder_question_answer": "",   # clear any previous answer
-            "phase": WorkflowPhase.WAITING_FOR_ANSWER,
-            "stop_reason": "waiting_for_coder_answer",
-        }
+
+        if skip:
+            reason     = "cap reached" if cap_reached else "advisory mode = auto_proceed"
+            assumption = default_ or "Proceeding with the most reasonable default."
+            emit_status(
+                active,
+                f"⚡ Skipping question ({reason}) — assumption: {assumption}",
+                **_progress_meta(state, "coding"),
+            )
+            # Re-invoke the coder with the assumption injected as a synthetic answer
+            from langchain_core.messages import AIMessage as _AIMessage
+            messages_with_assumption = messages + [
+                _AIMessage(content=result),
+                HumanMessage(content=f"[AUTO-SKIPPED] {assumption}"),
+            ]
+            try:
+                result, budget_update = _invoke_with_budget(
+                    state, active, messages_with_assumption, tools,
+                    inject_memory=True, node="coder",
+                )
+            except BudgetExceededException:
+                return {"phase": WorkflowPhase.STOPPED, "stop_reason": "budget_hard_limit_exceeded"}
+            # Fall through to normal result handling below with updated result
+        else:
+            emit_coder_question(
+                asked_by=active,
+                question=question_payload["question"],
+                context=question_payload["context"],
+                options=question_payload["options"],
+                item_id=item.id,
+                urgency=urgency,
+                default_if_skipped=default_,
+            )
+            emit_node_end(active, "Coding", "Paused — coder is asking the human a question")
+            return {
+                "needs_coder_answer": True,
+                "coder_question": question_payload["question"],
+                "coder_question_context": question_payload["context"],
+                "coder_question_options": question_payload["options"],
+                "coder_question_asked_by": active,
+                "coder_question_urgency": urgency,
+                "coder_question_default": default_,
+                "coder_question_answer": "",
+                "todo_items": updated_items,
+                "phase": WorkflowPhase.WAITING_FOR_ANSWER,
+                "stop_reason": "waiting_for_coder_answer",
+            }
+    else:
+        updated_items = state.todo_items
 
     emit_node_end(active, "Coding", f"Implementation complete — handing to {_reviewer_label(reviewer)} for peer review")
     with suppress(Exception):
@@ -2071,6 +2121,8 @@ def coder_node(state: GraphState) -> dict:
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
         "total_iterations": state.total_iterations + 1,
+        # Propagate updated todo_items (coder_questions_asked counter may have changed)
+        "todo_items": updated_items,
         # Clear any lingering question state from previous items
         "needs_coder_answer": False,
         "coder_question": "",
@@ -2078,6 +2130,8 @@ def coder_node(state: GraphState) -> dict:
         "coder_question_options": [],
         "coder_question_asked_by": "",
         "coder_question_answer": "",
+        "coder_question_urgency": "blocking",
+        "coder_question_default": "",
         **budget_update,
     }
     _save_checkpoint_snapshot(state, updates, "code_complete")
@@ -2787,6 +2841,11 @@ def answer_gate_node(state: GraphState) -> dict:
       Clear the question fields and advance to ``CODING`` so the coder
       resumes with the answer injected into its next invocation.
 
+      Special sentinel ``"__skip__"``: the human chose the "Skip — use default"
+      button for an advisory question.  The gate replaces the sentinel with
+      ``coder_question_default`` (or a generic fallback) so the coder receives
+      a concrete assumption rather than the raw sentinel value.
+
     * Still waiting:
       Return ``WAITING_FOR_ANSWER`` so the orchestrator halts the graph.
       The web server or Telegram bot will call ``/api/answer`` to populate
@@ -2797,14 +2856,30 @@ def answer_gate_node(state: GraphState) -> dict:
     # If the coder question was already answered (e.g. on resume after answer),
     # clear the fields and let the coder continue.
     if state.coder_question_answer:
-        emit_status(
-            "system",
-            f"✅ Answer received — resuming {state.coder_question_asked_by}",
-            **_progress_meta(state, "coding"),
-        )
+        answer = state.coder_question_answer
+
+        # Handle __skip__ sentinel: replace with the coder's stated default
+        if answer == "__skip__":
+            default_ = state.coder_question_default or "Proceeding with the most reasonable default."
+            answer   = default_
+            emit_status(
+                "system",
+                f"⚡ Human chose to skip — using default: {default_[:120]}",
+                **_progress_meta(state, "coding"),
+            )
+        else:
+            emit_status(
+                "system",
+                f"✅ Answer received — resuming {state.coder_question_asked_by}",
+                **_progress_meta(state, "coding"),
+            )
+
         emit_node_end("system", "Answer Gate", "Answer delivered, coder will continue")
         return {
             "needs_coder_answer": False,
+            "coder_question_answer": answer,
+            "coder_question_urgency": "blocking",  # reset to safe default
+            "coder_question_default": "",
             "phase": WorkflowPhase.CODING,
             "stop_reason": "",
         }
