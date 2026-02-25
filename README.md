@@ -558,7 +558,12 @@ See `.env.example` for all available settings. Key options:
 | `OPENAI_API_KEY` | — | OpenAI API key (required if any model uses OpenAI) |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (required if any model uses Anthropic) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL (required if any model uses Ollama) |
-| `TARGET_REPO_PATH` | (required) | Path to target Git repo |
+| `TARGET_REPO_PATH` | (optional) | Static path to target Git repo — overrides WorkspaceManager |
+| `DAEDALUS_WORKSPACE_DIR` | `~/daedalus-workspace` | Directory where repos are cloned on-demand |
+| `REPOS_YAML_PATH` | `repos.yaml` | Path to repo registry file (see [Repo Registry](#-repo-registry)) |
+| `GITLAB_URL` | `https://gitlab.com` | Base URL of your GitLab instance |
+| `GITLAB_TOKEN` | — | GitLab personal access token |
+| `GITHUB_TOKEN` | — | GitHub personal access token |
 | `CODER_1_MODEL` | `gpt-4o-mini` | Model for Coder 1 — prefix `ollama:` for local models |
 | `CODER_2_MODEL` | `gpt-4o-mini` | Model for Coder 2 — prefix `ollama:` for local models |
 | `PLANNER_MODEL` | `gpt-4o-mini` | Model for Planner |
@@ -571,6 +576,52 @@ See `.env.example` for all available settings. Key options:
 | `MAX_ITERATIONS_PER_ITEM` | `5` | Max rework attempts per item |
 | `SHELL_TIMEOUT_SECONDS` | `120` | Shell command timeout |
 | `LOG_LEVEL` | `INFO` | Logging level |
+
+## 📋 Repo Registry
+
+Daedalus uses `repos.yaml` (project root) as an access control list.
+Only repositories listed there may be cloned or modified.  Any task
+targeting an unknown repo is rejected before the workflow starts.
+
+### repos.yaml schema
+
+```yaml
+# repos.yaml — repositories Daedalus is permitted to work on
+repos:
+  - name: my-api                          # short alias for Telegram / Web UI
+    url: https://github.com/org/my-api    # full HTTPS forge URL (platform auto-detected)
+    default_branch: main                  # branch to check out and target for PRs
+    description: "Main backend API"       # shown in /status
+
+  - name: infra-scripts
+    url: https://gitlab.internal/ops/infra-scripts
+    default_branch: main
+    description: "Internal infrastructure scripts"
+```
+
+### Referencing repos in tasks
+
+You can reference a repo in any task by:
+
+| Format | Example |
+|--------|---------|
+| Name alias | `fix issue #42 in my-api` |
+| Full URL | `add feature to https://github.com/org/my-api` |
+| `owner/name` | `refactor org/my-api` |
+| No-scheme URL | `analyse github.com/org/my-api` |
+
+### Permissive default
+
+If `repos.yaml` exists but is **empty** (`repos: []`), the registry guard
+is skipped and any repo ref is accepted.  Populate the file to enforce
+access control.
+
+### Custom path
+
+Set `REPOS_YAML_PATH=/path/to/custom-repos.yaml` to use a file outside
+the project root.
+
+---
 
 ## 🆕 What Changed in v2.0
 

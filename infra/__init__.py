@@ -22,6 +22,7 @@ from infra.forge import ForgeClient, ForgeError, Issue, PRRequest, PRResult
 from infra.github_client import GitHubClient
 from infra.gitlab_client import GitLabClient
 from infra.workspace import WorkspaceError, WorkspaceInfo, WorkspaceManager
+from infra.registry import RepoEntry, RepoRegistry, get_registry
 
 __all__ = [
     # Protocol & models
@@ -41,4 +42,8 @@ __all__ = [
     "WorkspaceManager",
     "WorkspaceInfo",
     "WorkspaceError",
+    # Registry
+    "RepoEntry",
+    "RepoRegistry",
+    "get_registry",
 ]

@@ -629,6 +629,45 @@ def _heuristic_router_intent(user_request: str) -> str | None:
     return None
 
 
+
+def _extract_repo_ref(user_request: str) -> str:
+    """Extract a repository reference from free-form user text.
+
+    Tries to detect:
+    - Full HTTPS URL:        ``https://github.com/org/repo``
+    - No-scheme forge URL:   ``github.com/org/repo``
+    - owner/name or alias following keywords like "in", "for", "on"
+
+    Returns the first match found, or ``""`` if nothing is detected.
+    """
+    raw = user_request.strip()
+
+    # 1. Full HTTPS URL
+    url_m = re.search(r"https?://[^\s/]+/[^\s/]+/[^\s]+", raw)
+    if url_m:
+        return url_m.group(0).rstrip(".,;:)")
+
+    # 2. No-scheme forge URL  (github.com/..., gitlab.*/...)
+    nscheme = re.search(
+        r"\b(?:github\.com|gitlab\.[^\s/]+)/[^\s/]+/[^\s]+",
+        raw,
+        re.IGNORECASE,
+    )
+    if nscheme:
+        return nscheme.group(0).rstrip(".,;:)")
+
+    # 3. Keyword-anchored owner/name or alias
+    kw = re.search(
+        r"\b(?:in|for|on|repo|repository)\s+([A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)?)",
+        raw,
+        re.IGNORECASE,
+    )
+    if kw:
+        return kw.group(1)
+
+    return ""
+
+
 def _parse_router_json(result: str) -> tuple[str | None, float]:
     """Parse strict JSON router output and validate intent."""
     try:
@@ -784,10 +823,13 @@ def router_node(state: GraphState) -> dict:
     emit_node_start("planner", "Router", item_desc=state.user_request[:100])
     emit_status("planner", "Classifying request intent", **_progress_meta(state, "planning"))
 
+    # Extract repo reference from the request (used by context_loader + registry guard)
+    repo_ref = state.repo_ref or _extract_repo_ref(state.user_request)
+
     heuristic_intent = _heuristic_router_intent(state.user_request)
     if heuristic_intent in ROUTER_INTENTS:
         emit_node_end("planner", "Router", f"Heuristic intent: {heuristic_intent}")
-        return {"input_intent": heuristic_intent}
+        return {"input_intent": heuristic_intent, "repo_ref": repo_ref}
 
     _router_prompt_file = Path(__file__).parent.parent / "agents" / "prompts" / "router.txt"
     if _router_prompt_file.exists():
@@ -806,7 +848,7 @@ def router_node(state: GraphState) -> dict:
 
     if llm_intent:
         emit_node_end("planner", "Router", f"LLM intent: {llm_intent} (confidence={confidence:.2f})")
-        return {"input_intent": llm_intent}
+        return {"input_intent": llm_intent, "repo_ref": repo_ref}
 
     fallback = "code" if is_programming_request(state.user_request or "") else "research"
     emit_status(
@@ -815,7 +857,7 @@ def router_node(state: GraphState) -> dict:
         **_progress_meta(state, "planning"),
     )
     emit_node_end("planner", "Router", f"Fallback intent: {fallback}")
-    return {"input_intent": fallback}
+    return {"input_intent": fallback, "repo_ref": repo_ref}
 
 
 # ---------------------------------------------------------------------------
@@ -845,6 +887,26 @@ def context_loader_node(state: GraphState) -> dict:
                 "stop_reason": "context_repo_path_missing",
                 "phase": WorkflowPhase.STOPPED,
             }
+        # ── Registry guard — reject unknown repos before cloning ────────
+        try:
+            from infra.registry import get_registry
+            _registry = get_registry()
+            if len(_registry) > 0 and not _registry.is_allowed(repo_ref):
+                emit_error(
+                    "planner",
+                    f"🚫 Repository {repo_ref!r} is not in repos.yaml. "
+                    f"Known repos: {[e.name for e in _registry.list_repos()]}",
+                )
+                emit_node_end("planner", "Context Loader", "Failed (repo not in registry)")
+                return {
+                    "repo_facts": {"error": f"Repo not in registry: {repo_ref}", "fallback": True},
+                    "context_loaded": False,
+                    "stop_reason": "context_repo_not_in_registry",
+                    "phase": WorkflowPhase.STOPPED,
+                }
+        except Exception as _reg_exc:
+            logger.warning("Registry check skipped: %s", _reg_exc)
+
         try:
             from infra.workspace import WorkspaceManager
             workspace_dir = Path(settings.daedalus_workspace_dir).expanduser().resolve()

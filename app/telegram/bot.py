@@ -256,8 +256,27 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("\u26d4 Not authorized.")
         return
 
+    # Registry summary (always shown, regardless of active task)
+    try:
+        from infra.registry import get_registry
+        _reg = get_registry()
+        _repo_list = _reg.list_repos()
+        if _repo_list:
+            repos_text = "\n".join(
+                f"  • `{e.name}` — {e.url}" + (f"\n    _{e.description}_" if e.description else "")
+                for e in _repo_list
+            )
+            repos_block = f"\n\n📋 *Registered repos ({len(_repo_list)}):*\n{repos_text}"
+        else:
+            repos_block = "\n\n📋 *Registered repos:* _none — add entries to repos.yaml_"
+    except Exception:
+        repos_block = ""
+
     if not _current_state:
-        await update.message.reply_text("\U0001f4a4 No active task.")
+        await update.message.reply_text(
+            "💤 No active task." + repos_block,
+            parse_mode="Markdown",
+        )
         return
 
     pending_note = ""
@@ -270,7 +289,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Branch: `{_current_state.branch_name or 'n/a'}`\n"
         f"Progress: {_current_state.completed_items}/{len(_current_state.todo_items)} items\n"
         f"{_current_state.get_progress_summary()}"
-        f"{pending_note}",
+        f"{pending_note}"
+        f"{repos_block}",
         parse_mode="Markdown",
     )
 
