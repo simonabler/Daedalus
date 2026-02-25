@@ -1599,11 +1599,9 @@ def status_node(state: GraphState) -> dict:
             f"User question: {state.user_request}"
         )
 
-    answer = _invoke_agent(
-        "planner",
-        [HumanMessage(content=context_prefix)],
-        tools=None,
-        inject_memory=False,
+    answer, budget_update = _invoke_with_budget(
+        state, "planner", [HumanMessage(content=context_prefix)],
+        tools=None, inject_memory=False, node="status",
     )
 
     emit_agent_response("planner", answer)
@@ -1613,6 +1611,7 @@ def status_node(state: GraphState) -> dict:
         "phase": WorkflowPhase.COMPLETE,
         "stop_reason": "status_answered",
         "input_intent": "status",
+        **budget_update,
     }
 
 
@@ -1625,7 +1624,10 @@ def research_node(state: GraphState) -> dict:
         "Do not propose or perform code/file/git changes.\n\n"
         f"User request:\n{state.user_request}\n"
     )
-    answer = _invoke_agent("planner", [HumanMessage(content=prompt)])
+    answer, budget_update = _invoke_with_budget(
+        state, "planner", [HumanMessage(content=prompt)],
+        tools=None, inject_memory=False, node="research",
+    )
     # Emit the answer as a visible response — shown as an expanded reply bubble
     emit_agent_response("planner", answer)
     emit_node_end("planner", "Research", "Research response prepared")
@@ -1634,6 +1636,7 @@ def research_node(state: GraphState) -> dict:
         "phase": WorkflowPhase.COMPLETE,
         "stop_reason": "research_answered",
         "input_intent": "research",
+        **budget_update,
     }
 
 
@@ -1847,7 +1850,10 @@ def planner_plan_node(state: GraphState) -> dict:
         "If this is a programming request, provide a step-by-step TODO plan."
     )
 
-    result = _invoke_agent("planner", [HumanMessage(content=prompt)], PLANNER_TOOLS)
+    result, budget_update = _invoke_with_budget(
+        state, "planner", [HumanMessage(content=prompt)],
+        tools=PLANNER_TOOLS, inject_memory=False, node="planner",
+    )
     items = _parse_plan_from_result(result)
 
     if not items and is_programming_request(state.user_request):
@@ -1934,7 +1940,10 @@ def _compress_memory_file(key: str) -> None:
     if not prompt:
         return
     try:
-        result = _invoke_agent("planner", [HumanMessage(content=prompt)])
+        result, budget_update = _invoke_with_budget(
+            state, "planner", [HumanMessage(content=prompt)],
+            tools=None, inject_memory=False, node="planner_review",
+        )
         # Clean up: strip markdown fences if present
         cleaned = result.strip()
         if cleaned.startswith("```"):
@@ -2344,7 +2353,10 @@ def learn_from_review_node(state: GraphState) -> dict:
     )
 
     try:
-        result = _invoke_agent("planner", [HumanMessage(content=prompt)])
+        result, budget_update = _invoke_with_budget(
+            state, "planner", [HumanMessage(content=prompt)],
+            tools=None, inject_memory=False, node="planner_review",
+        )
 
         # Parse JSON from result
         learnings = _parse_learnings(result)
@@ -2439,7 +2451,10 @@ def planner_review_node(state: GraphState) -> dict:
         f"5. If APPROVE, confirm or adjust the suggested Conventional Commit message."
     )
 
-    result = _invoke_agent("planner", [HumanMessage(content=prompt)], PLANNER_TOOLS)
+    result, budget_update = _invoke_with_budget(
+        state, "planner", [HumanMessage(content=prompt)],
+        tools=PLANNER_TOOLS, inject_memory=False, node="planner",
+    )
     verdict = "APPROVE" if "APPROVE" in result.upper() else "REWORK"
 
     emit_verdict("planner", verdict, detail=result, item_id=item.id)
@@ -2700,7 +2715,10 @@ def planner_env_fix_node(state: GraphState) -> dict:
         "Do not add explanation outside the JSON block."
     )
 
-    raw = _invoke_agent("planner", [HumanMessage(content=prompt)], tools=None, inject_memory=False)
+    raw, budget_update = _invoke_with_budget(
+        state, "planner", [HumanMessage(content=prompt)],
+        tools=None, inject_memory=False, node="env_fix",
+    )
 
     # Parse JSON from LLM response
     fix_description = "Install missing test dependency"
@@ -2753,6 +2771,7 @@ def planner_env_fix_node(state: GraphState) -> dict:
         # Skip peer review for env-fix items — coder goes straight back to tester
         "peer_review_verdict": "APPROVE",
         "peer_review_notes": "Auto-approved: environment fix item, no peer review needed.",
+        **budget_update,
     }
 
 

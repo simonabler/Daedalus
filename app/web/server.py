@@ -74,7 +74,7 @@ class PlanApproveRequest(BaseModel):
 
 async def _broadcast_event(event: WorkflowEvent) -> None:
     """Forward a workflow event to all connected WebSocket clients."""
-    global _context_usage_summary
+    global _context_usage_summary, _current_state
 
     # Track latest context usage for /api/status
     if event.category.value == "context_usage" and event.metadata:
@@ -88,6 +88,29 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
             "fraction":          meta.get("fraction", 0.0),
             "compressed_count":  compressed_count,
         }
+
+    # Track cumulative token spend in _current_state so /api/status reflects
+    # live costs even while the workflow is still running (not just at end).
+    if event.category.value == "token_usage" and event.metadata and _current_state is not None:
+        meta = event.metadata
+        budget = _current_state.token_budget or {}
+        budget["total_tokens"]   = budget.get("total_tokens", 0)   + meta.get("total_tokens", 0)
+        budget["total_cost_usd"] = round(
+            budget.get("total_cost_usd", 0.0) + meta.get("cost_usd", 0.0), 6
+        )
+        # Keep per_agent breakdown up-to-date
+        per_agent = budget.setdefault("per_agent", {})
+        agent = meta.get("agent") or meta.get("asked_by", "unknown")
+        if agent not in per_agent:
+            per_agent[agent] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                                "total_tokens": 0, "cost_usd": 0.0}
+        entry = per_agent[agent]
+        entry["calls"]             += 1
+        entry["prompt_tokens"]     += meta.get("prompt_tokens", 0)
+        entry["completion_tokens"] += meta.get("completion_tokens", 0)
+        entry["total_tokens"]      += meta.get("total_tokens", 0)
+        entry["cost_usd"]           = round(entry["cost_usd"] + meta.get("cost_usd", 0.0), 6)
+        _current_state.token_budget = budget
 
     if not _ws_clients:
         return
