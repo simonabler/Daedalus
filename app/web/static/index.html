@@ -1755,12 +1755,21 @@ fetch('/api/status').then(r => r.json()).then(data => {
       if (q && q.needs_coder_answer) showQuestionPanel(q.coder_question || {});
     }).catch(() => {});
   }
+  if (data.phase === 'waiting_for_plan_approval' && !_planApprovalPanel) {
+    const items = data.pending_plan_items || [];
+    showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
+  }
 }).catch(() => {});
 
 setInterval(() => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    fetch('/api/status').then(r => r.json()).then(updateHeader).catch(() => {});
-  }
+  fetch('/api/status').then(r => r.json()).then(data => {
+    updateHeader(data);
+    // Restore plan approval panel if we're waiting and it's not visible
+    if (data.phase === 'waiting_for_plan_approval' && !_planApprovalPanel) {
+      const items = data.pending_plan_items || [];
+      showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
+    }
+  }).catch(() => {});
 }, 5000);
 </script>
 </body>
