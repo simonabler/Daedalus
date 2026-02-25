@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     # "ask"          → advisory questions are forwarded to the human (default, existing behaviour)
     # "auto_proceed" → advisory questions are skipped; coder uses default_if_skipped assumption
     coder_question_advisory_mode: str = "ask"
+
+    # ── Forge / Source-control API credentials ─────────────────────────
+    # GitHub personal access token (PAT).  Needed for private repos and to
+    # avoid rate-limiting on public repos (5000 req/h vs 60 req/h).
+    github_token: str = ""
+
+    # GitLab personal access token.
+    gitlab_token: str = ""
+
+    # Base URL of your GitLab instance.  Use "https://gitlab.com" for
+    # gitlab.com or the full URL for a self-hosted instance.
+    gitlab_url: str = "https://gitlab.com"
     max_output_chars: int = 12_000
 
     # Token budget / cost limits (USD). Set to 0.0 to disable.
