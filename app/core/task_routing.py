@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from app.core.state import IssueRef
 
 logger = get_logger("core.task_routing")
 
@@ -157,3 +162,96 @@ def history_summary(repo_root: str) -> str:
             snippets.append(f"{agent}: {wins}/{trials} ({rate:.0f}%)")
         lines.append(f"- {task_type}: " + ", ".join(snippets))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Issue reference parsing
+# ---------------------------------------------------------------------------
+
+# Matches GitHub/GitLab issue URLs:
+#   https://github.com/owner/repo/issues/42
+#   https://gitlab.com/group/project/-/issues/42
+#   https://gitlab.internal/team/proj/issues/42
+_ISSUE_URL_RE = re.compile(
+    r"https?://(?P<host>[^\s/]+)/(?P<path>[^\s]+?)/-?/?issues/(?P<id>\d+)",
+    re.IGNORECASE,
+)
+
+# Matches #42 or issue #42 or issue 42 when a repo ref can be found alongside it
+_HASH_ISSUE_RE = re.compile(r"(?:issue\s+)?#(?P<id>\d+)\b", re.IGNORECASE)
+
+# Matches "issue 42 in owner/repo" or "issue 42 for owner/repo"
+_BARE_ISSUE_RE = re.compile(
+    r"\bissue\s+(?P<id>\d+)\s+(?:in|for|on|at)\s+(?P<repo>[A-Za-z0-9_./-]+)",
+    re.IGNORECASE,
+)
+
+
+def _platform_from_host(host: str) -> str:
+    """Guess platform string from a forge hostname."""
+    h = host.lower()
+    if "github" in h:
+        return "github"
+    if "gitlab" in h:
+        return "gitlab"
+    return ""
+
+
+def parse_issue_ref(user_request: str, fallback_repo_ref: str = "") -> "IssueRef | None":
+    """Detect and parse a forge issue reference from free-form user text.
+
+    Detection strategies (first match wins):
+
+    1. Full issue URL:
+       ``https://github.com/owner/repo/issues/42``
+       ``https://gitlab.com/group/proj/-/issues/7``
+
+    2. Bare issue + inline repo:
+       ``fix issue 42 in owner/repo``
+
+    3. ``#N`` shorthand when a *fallback_repo_ref* is available:
+       ``fix #42`` (with repo_ref already set to "owner/repo")
+
+    Args:
+        user_request:     Raw text from the user.
+        fallback_repo_ref: repo_ref already extracted by _extract_repo_ref
+                           (used for #N shorthand that has no embedded URL).
+
+    Returns:
+        :class:`~app.core.state.IssueRef` or ``None`` if nothing detected.
+    """
+    from app.core.state import IssueRef  # local to avoid circular import at module load
+
+    # ── Strategy 1: full issue URL ────────────────────────────────────
+    m = _ISSUE_URL_RE.search(user_request)
+    if m:
+        host = m.group("host")
+        raw_path = m.group("path").rstrip("/-")
+        # path is like "owner/repo" or "group/sub/project"
+        # reconstruct a clean repo_ref = host/path
+        repo_ref = f"{host}/{raw_path}"
+        return IssueRef(
+            repo_ref=repo_ref,
+            issue_id=int(m.group("id")),
+            platform=_platform_from_host(host),
+        )
+
+    # ── Strategy 2: "issue 42 in owner/repo" ─────────────────────────
+    m2 = _BARE_ISSUE_RE.search(user_request)
+    if m2:
+        return IssueRef(
+            repo_ref=m2.group("repo").rstrip(".,;"),
+            issue_id=int(m2.group("id")),
+            platform="",
+        )
+
+    # ── Strategy 3: #N shorthand with known repo_ref ─────────────────
+    m3 = _HASH_ISSUE_RE.search(user_request)
+    if m3 and fallback_repo_ref:
+        return IssueRef(
+            repo_ref=fallback_repo_ref,
+            issue_id=int(m3.group("id")),
+            platform="",
+        )
+
+    return None

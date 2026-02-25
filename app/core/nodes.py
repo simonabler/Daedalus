@@ -20,6 +20,9 @@ from app.agents.models import get_llm, load_system_prompt
 from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import (
+    EventCategory,
+    WorkflowEvent,
+    emit,
     emit_agent_response,
     emit_agent_result,
     emit_agent_thinking,
@@ -54,6 +57,7 @@ from app.core.task_routing import (
     classify_task_type,
     history_summary,
     is_programming_request,
+    parse_issue_ref,
     record_agent_outcome,
     select_agent_thompson,
 )
@@ -826,10 +830,23 @@ def router_node(state: GraphState) -> dict:
     # Extract repo reference from the request (used by context_loader + registry guard)
     repo_ref = state.repo_ref or _extract_repo_ref(state.user_request)
 
+    # Detect issue reference — must happen before intent classification so the
+    # issue URL/pattern influences routing (issue tasks are always "code" intent)
+    issue_ref = state.issue_ref or parse_issue_ref(state.user_request, fallback_repo_ref=repo_ref)
+
+    # If issue_ref provides a better repo_ref, prefer it
+    if issue_ref and not repo_ref:
+        repo_ref = issue_ref.repo_ref
+
+    # Issue references are always coding tasks
+    if issue_ref:
+        emit_node_end("planner", "Router", f"Issue reference detected: #{issue_ref.issue_id} in {issue_ref.repo_ref}")
+        return {"input_intent": "code", "repo_ref": repo_ref, "issue_ref": issue_ref}
+
     heuristic_intent = _heuristic_router_intent(state.user_request)
     if heuristic_intent in ROUTER_INTENTS:
         emit_node_end("planner", "Router", f"Heuristic intent: {heuristic_intent}")
-        return {"input_intent": heuristic_intent, "repo_ref": repo_ref}
+        return {"input_intent": heuristic_intent, "repo_ref": repo_ref, "issue_ref": None}
 
     _router_prompt_file = Path(__file__).parent.parent / "agents" / "prompts" / "router.txt"
     if _router_prompt_file.exists():
@@ -848,7 +865,7 @@ def router_node(state: GraphState) -> dict:
 
     if llm_intent:
         emit_node_end("planner", "Router", f"LLM intent: {llm_intent} (confidence={confidence:.2f})")
-        return {"input_intent": llm_intent, "repo_ref": repo_ref}
+        return {"input_intent": llm_intent, "repo_ref": repo_ref, "issue_ref": None}
 
     fallback = "code" if is_programming_request(state.user_request or "") else "research"
     emit_status(
@@ -857,7 +874,131 @@ def router_node(state: GraphState) -> dict:
         **_progress_meta(state, "planning"),
     )
     emit_node_end("planner", "Router", f"Fallback intent: {fallback}")
-    return {"input_intent": fallback, "repo_ref": repo_ref}
+    return {"input_intent": fallback, "repo_ref": repo_ref, "issue_ref": None}
+
+
+# ---------------------------------------------------------------------------
+# Issue hydration helper
+# ---------------------------------------------------------------------------
+
+def _hydrate_issue(state: GraphState) -> tuple[str, dict]:
+    """Fetch issue content from forge and return (enriched_request, extra_state).
+
+    Called by context_loader_node when state.issue_ref is set.
+
+    Returns:
+        (enriched_user_request, extra_dict)
+        extra_dict is merged into context_loader's return value.
+    """
+    issue_ref = state.issue_ref
+    if not issue_ref:
+        return state.user_request, {}
+
+    emit_status(
+        "planner",
+        f"📋 Fetching issue #{issue_ref.issue_id} from {issue_ref.repo_ref}…",
+        **_progress_meta(state, "planning"),
+    )
+
+    try:
+        from infra.factory import get_forge_client
+        from infra.forge import ForgeError
+
+        # Build a URL for platform detection: use the repo_ref as-is if it
+        # already looks like a URL, otherwise construct one from the repo_ref.
+        ref = issue_ref.repo_ref
+        if not ref.startswith("http"):
+            # ref might be "github.com/owner/repo" or "owner/repo"
+            if "/" in ref and not ref.startswith("http"):
+                parts = ref.split("/")
+                if len(parts) >= 3:
+                    # has host prefix
+                    url_for_detection = f"https://{ref}"
+                else:
+                    # short owner/repo — assume github
+                    url_for_detection = f"https://github.com/{ref}"
+            else:
+                url_for_detection = f"https://github.com/{ref}"
+        else:
+            url_for_detection = ref
+
+        client = get_forge_client(
+            url_for_detection,
+            platform=issue_ref.platform or None,
+        )
+
+        # The repo path for the client API is everything after the host
+        if ref.startswith("http"):
+            from urllib.parse import urlparse
+            parsed = urlparse(ref)
+            repo_path = parsed.path.strip("/")
+        else:
+            parts = ref.split("/")
+            if len(parts) >= 3:
+                repo_path = "/".join(parts[1:])   # strip host
+            else:
+                repo_path = ref
+
+        issue = client.get_issue(repo_path, issue_ref.issue_id)
+
+        # Build enriched task description
+        labels_str = ", ".join(issue.labels) if issue.labels else "none"
+        created_str = issue.created_at.strftime("%Y-%m-%d") if issue.created_at else "unknown"
+        enriched = (
+            f"Issue #{issue_ref.issue_id}: {issue.title}\n\n"
+            f"{issue.description or '(no description)'}\n\n"
+            f"Labels: {labels_str}\n"
+            f"Reporter: {issue.author or 'unknown'}\n"
+            f"Created: {created_str}\n"
+            f"URL: {issue.url}"
+        )
+
+        emit_status(
+            "planner",
+            f"✅ Issue #{issue_ref.issue_id} loaded: \"{issue.title}\"",
+            **_progress_meta(state, "planning"),
+        )
+
+        # Emit a dedicated event so UI and Telegram can show the issue card
+        emit(WorkflowEvent(
+            category=EventCategory.STATUS,
+            agent="planner",
+            title="issue_loaded",
+            metadata={
+                "issue_number": issue_ref.issue_id,
+                "issue_title": issue.title,
+                "repo_ref": issue_ref.repo_ref,
+                "issue_url": issue.url,
+            },
+        ))
+
+        # Post "working on it" comment — best-effort, never blocks workflow
+        try:
+            client.post_comment(
+                repo_path,
+                issue_ref.issue_id,
+                "🤖 **Daedalus** is working on this issue.",
+            )
+            logger.info("Posted working-on-it comment on issue #%d", issue_ref.issue_id)
+        except Exception as comment_exc:
+            logger.warning(
+                "Could not post comment on issue #%d: %s",
+                issue_ref.issue_id, comment_exc,
+            )
+
+        return enriched, {}
+
+    except Exception as exc:
+        logger.warning(
+            "Issue hydration failed for #%d in %s: %s — using original request",
+            issue_ref.issue_id, issue_ref.repo_ref, exc,
+        )
+        emit_status(
+            "planner",
+            f"⚠️ Could not fetch issue #{issue_ref.issue_id}: {exc} — continuing with original request",
+            **_progress_meta(state, "planning"),
+        )
+        return state.user_request, {}
 
 
 # ---------------------------------------------------------------------------
@@ -947,6 +1088,12 @@ def context_loader_node(state: GraphState) -> dict:
     # Propagate resolved root into context var so all tools use it
     from app.core.active_repo import set_repo_root as _set_repo_root
     _set_repo_root(str(repo_path))
+
+    # ── Issue hydration: fetch issue content and enrich user_request ──────
+    hydrated_request = state.user_request
+    hydration_extra: dict = {}
+    if state.issue_ref:
+        hydrated_request, hydration_extra = _hydrate_issue(state)
 
     emit_status("planner", "Reading repository documentation and structure", **_progress_meta(state, "planning"))
 
@@ -1103,6 +1250,8 @@ def context_loader_node(state: GraphState) -> dict:
         "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
         "context_loaded": True,
         "repo_root": str(repo_path),  # persist resolved path (covers workspace case)
+        "user_request": hydrated_request,  # enriched with issue content if issue_ref set
+        **hydration_extra,               # e.g. issue_comment_posted
         "static_issues": static_issues,
         "call_graph": call_graph,
         "dependency_graph": dependency_graph,
