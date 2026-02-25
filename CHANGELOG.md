@@ -5,6 +5,34 @@ All notable changes to the Daedalus project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [2.2.0] - 2026-02-25
+
+### Added — Repo Registry (YAML-based access control)
+
+- **`repos.yaml`** — new registry file at project root; defines every
+  repository Daedalus is permitted to clone or modify.
+- **`infra/registry.py`** — `RepoEntry` Pydantic model and `RepoRegistry`
+  class with `load()`, `resolve()`, `is_allowed()`, `list_repos()`.
+- **`get_registry()`** singleton factory; auto-loads `repos.yaml` and
+  respects `REPOS_YAML_PATH` config / env var.
+- **Registry guard in `context_loader_node`** — tasks targeting unknown
+  repos are stopped with `stop_reason="context_repo_not_in_registry"`.
+  Guard is skipped when the registry is empty (permissive default).
+- **`_extract_repo_ref()`** helper in `nodes.py` — detects repo references
+  from free-form user text: full HTTPS URL, no-scheme forge URL,
+  `owner/name` shorthand, or keyword-anchored alias.
+- **Router populates `GraphState.repo_ref`** — extracted from the user
+  request at intent-classification time; passed to context loader.
+- **`/api/status` now includes `registered_repos`** list from the registry.
+- **Telegram `/status` lists registered repos** with names and URLs.
+- **`REPOS_YAML_PATH` config key** added to `app/core/config.py`.
+- **`infra/__init__.py`** exports `RepoEntry`, `RepoRegistry`, `get_registry`.
+- **53 new tests** in `tests/test_registry.py` covering all registry
+  operations, the context_loader guard, and `_extract_repo_ref`.
+
+### Closes
+GitHub issue #46
+
 ## [2.1.0] - 2026-02-22
 
 ### Changed — Provider-agnostic Coder configuration

@@ -1,0 +1,29 @@
+# repos.yaml — repositories Daedalus is permitted to clone and modify
+#
+# Add every repo you want Daedalus to be able to work on here.
+# Daedalus will refuse any task that targets a repo not listed in this file.
+#
+# Fields:
+#   name           Short alias used in Telegram tasks and the Web UI.
+#                  Example: "fix issue #42 in my-api"  (required, unique)
+#   url            Full HTTPS forge URL.                                  (required)
+#   default_branch Branch Daedalus checks out and targets for PRs/MRs.   (default: main)
+#   description    Human-readable description shown in /status.           (optional)
+#
+# Platform is auto-detected from the URL:
+#   - github.com           → GitHub
+#   - configured GITLAB_URL → GitLab (set GITLAB_URL env var for self-hosted)
+#
+# Examples:
+repos:
+  # ── GitHub example ────────────────────────────────────────────────────────
+  # - name: my-api
+  #   url: https://github.com/org/my-api
+  #   default_branch: main
+  #   description: "Main backend API"
+
+  # ── Self-hosted GitLab example ────────────────────────────────────────────
+  # - name: infra-scripts
+  #   url: https://gitlab.internal/ops/infra-scripts
+  #   default_branch: main
+  #   description: "Internal infrastructure scripts"

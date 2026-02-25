@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # Target repo — static override; takes precedence over WorkspaceManager
     target_repo_path: str = ""
 
+    # Repo registry — path to repos.yaml.
+    # Relative paths are resolved from CWD at runtime.
+    # Leave empty to use the default repos.yaml in the project root.
+    repos_yaml_path: str = ""
+
     @field_validator("target_repo_path")
     @classmethod
     def _resolve_repo(cls, value: str) -> str:

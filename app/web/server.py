@@ -56,6 +56,7 @@ class StatusResponse(BaseModel):
     context_usage: dict = {}
     needs_plan_approval: bool = False
     pending_plan_items: list = []
+    registered_repos: list = []   # repos from repos.yaml
 
 
 class ApprovalRequest(BaseModel):
@@ -333,8 +334,22 @@ async def submit_task(req: TaskRequest):
 
 @app.get("/api/status")
 async def get_status():
+    # Load registered repos for every response (cheap — cached singleton)
+    try:
+        from infra.registry import get_registry
+        _reg = get_registry()
+        _repos = [
+            {"name": e.name, "url": e.url, "description": e.description, "default_branch": e.default_branch}
+            for e in _reg.list_repos()
+        ]
+    except Exception:
+        _repos = []
+
     if not _current_state:
-        return StatusResponse(phase="idle", progress="No active task", branch="", error="", items_total=0, items_done=0)
+        return StatusResponse(
+            phase="idle", progress="No active task", branch="", error="",
+            items_total=0, items_done=0, registered_repos=_repos,
+        )
     return StatusResponse(
         phase=_current_state.phase.value,
         progress=_current_state.get_progress_summary(),
@@ -349,6 +364,7 @@ async def get_status():
             {"id": i.id, "description": i.description, "task_type": i.task_type}
             for i in _current_state.todo_items
         ] if _current_state.needs_plan_approval else [],
+        registered_repos=_repos,
     )
 
 
