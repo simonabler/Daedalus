@@ -600,7 +600,7 @@
     <span class="progress-text" id="progressText">—</span>
     <span class="badge badge-idle" id="badge">IDLE</span>
     <button class="intel-btn ctx-btn" id="ctxBtn" title="Context window usage" style="display:none">📊 0%</button>
-    <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget &amp; cost breakdown" style="display:none">💰 $0.0000</button>
+    <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget &amp; cost breakdown">💰 $0.0000</button>
     <button class="intel-btn" id="intelBtn" onclick="toggleIntel()" title="Code Intelligence Dashboard">🧠 Intel</button>
   </div>
 </header>
@@ -749,7 +749,7 @@ function toggleCostModal() {
 function renderCostModal() {
   const body = document.getElementById('costModalBody');
   if (!_costData && _totalCostUsd === 0) {
-    body.innerHTML = '<p style="color:var(--text-dim);text-align:center">No token data recorded yet.</p>';
+    body.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:24px 0">No token usage recorded yet.<br><span style="font-size:11px">Costs appear here after the first LLM call.</span></p>';
     return;
   }
 
@@ -1479,8 +1479,29 @@ function updateHeader(data) {
   );
   if (data.completed !== undefined) {
     progressText.textContent = `${data.completed}/${data.total || '?'} items · ${data.branch || ''}`;
+  } else if (data.items_done !== undefined) {
+    progressText.textContent = `${data.items_done}/${data.items_total || '?'} items · ${data.branch || ''}`;
   } else if (data.progress) {
     progressText.textContent = data.progress;
+  }
+
+  // Sync token budget from /api/status response
+  const budget = data.token_budget;
+  if (budget && typeof budget === 'object') {
+    const costUsd = budget.total_cost_usd ?? 0;
+    const totalTok = budget.total_tokens ?? 0;
+    if (costUsd > 0 || totalTok > 0) {
+      _costData = budget;
+      _totalCostUsd = costUsd;
+      const btn = document.getElementById('costBtn');
+      if (btn) {
+        btn.style.display = '';
+        btn.textContent = `💰 $${costUsd.toFixed(4)}`;
+        btn.classList.remove('cost-soft', 'cost-hard');
+        if (budget.hard_limit_hit) btn.classList.add('cost-hard');
+        else if (budget.soft_limit_hit) btn.classList.add('cost-soft');
+      }
+    }
   }
 }
 
