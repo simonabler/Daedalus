@@ -16,12 +16,15 @@ def git_repo(tmp_path):
     subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True)
 
+    from app.core.active_repo import set_repo_root, clear_repo_root
+    set_repo_root(str(tmp_path))
     with patch("app.tools.git.get_settings") as ms:
         ms.return_value.target_repo_path = str(tmp_path)
         ms.return_value.max_output_chars = 10000
         ms.return_value.git_author_name = "test"
         ms.return_value.git_author_email = "test@test"
         yield tmp_path
+    clear_repo_root()
 
 
 class TestCommandValidation:

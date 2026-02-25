@@ -68,8 +68,8 @@ _SEEDS = {
 # ── Core API ──────────────────────────────────────────────────────────────
 
 def _repo_root() -> Path:
-    settings = get_settings()
-    return Path(settings.target_repo_path)
+    from app.core.active_repo import get_repo_root
+    return Path(get_repo_root())
 
 
 def _memory_path(key: str) -> Path:

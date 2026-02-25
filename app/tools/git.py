@@ -15,6 +15,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from app.core.active_repo import get_repo_root
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -90,7 +91,7 @@ def _validate_git_command(command: str) -> str | None:
 def _run_git(command: str) -> str:
     """Execute a validated git command and return output."""
     settings = get_settings()
-    root = Path(settings.target_repo_path).resolve()
+    root = Path(get_repo_root()).resolve()
 
     if not root.is_dir():
         return f"ERROR: repo root does not exist: {root}"

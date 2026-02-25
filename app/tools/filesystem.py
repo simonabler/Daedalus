@@ -9,6 +9,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from app.core.active_repo import get_repo_root
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -21,8 +22,7 @@ class PathEscapeError(Exception):
 
 def _resolve_safe(relative_path: str) -> Path:
     """Resolve *relative_path* against repo root and verify it stays inside."""
-    settings = get_settings()
-    root = Path(settings.target_repo_path).resolve()
+    root = Path(get_repo_root()).resolve()
     if not root.exists():
         raise FileNotFoundError(f"Target repo root does not exist: {root}")
 

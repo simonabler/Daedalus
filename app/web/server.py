@@ -41,7 +41,8 @@ _task_queue: asyncio.Queue | None = None
 
 class TaskRequest(BaseModel):
     task: str
-    repo_path: str = ""
+    repo_path: str = ""   # static local path (backward-compatible override)
+    repo_ref: str = ""    # forge reference for dynamic workspace (URL / owner/name)
 
 
 class StatusResponse(BaseModel):
@@ -158,15 +159,17 @@ async def _process_tasks():
         try:
             settings = get_settings()
             repo = task_req.repo_path or settings.target_repo_path
+            repo_ref = task_req.repo_ref or ""
 
             _current_state = GraphState(
                 user_request=task_req.task,
                 repo_root=repo,
+                repo_ref=repo_ref,
                 phase=WorkflowPhase.PLANNING,
             )
             await _broadcast_raw("status", {"phase": "planning", "task": task_req.task})
 
-            final_state = await run_workflow(task_req.task, repo)
+            final_state = await run_workflow(task_req.task, repo, repo_ref=repo_ref)
             _current_state = final_state
 
             # If the workflow halted waiting for human approval, register it in
@@ -601,7 +604,11 @@ async def websocket_endpoint(ws: WebSocket):
             try:
                 msg = json.loads(data)
                 if msg.get("type") == "task":
-                    req = TaskRequest(task=msg["task"], repo_path=msg.get("repo_path", ""))
+                    req = TaskRequest(
+                        task=msg["task"],
+                        repo_path=msg.get("repo_path", ""),
+                        repo_ref=msg.get("repo_ref", ""),
+                    )
                     await _task_queue.put(req)
                     await ws.send_text(json.dumps({"type": "ack", "data": "Task queued"}))
             except json.JSONDecodeError:

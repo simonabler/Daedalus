@@ -64,7 +64,8 @@ class GraphState(BaseModel):
     """The complete state passed between LangGraph nodes."""
 
     # ── Repository context ────────────────────────────────────────────
-    repo_root: str = ""
+    repo_root: str = ""        # absolute local path (set by context_loader or caller)
+    repo_ref: str = ""         # forge reference: URL or "owner/name" or "host/owner/name"
     branch_name: str = ""
 
     # ── User request ──────────────────────────────────────────────────

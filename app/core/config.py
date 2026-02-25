@@ -58,12 +58,25 @@ class Settings(BaseSettings):
     web_host: str = "127.0.0.1"
     web_port: int = 8420
 
-    # Target repo
+    # Target repo — static override; takes precedence over WorkspaceManager
     target_repo_path: str = ""
 
     @field_validator("target_repo_path")
     @classmethod
     def _resolve_repo(cls, value: str) -> str:
+        if value:
+            return str(Path(value).expanduser().resolve())
+        return value
+
+    # Dynamic workspace — repos are cloned here on-demand when TARGET_REPO_PATH
+    # is not set.  Mirrors the forge host/owner/name hierarchy, e.g.:
+    #   ~/daedalus-workspace/github.com/owner/repo
+    #   ~/daedalus-workspace/gitlab.internal/team/project
+    daedalus_workspace_dir: str = "~/daedalus-workspace"
+
+    @field_validator("daedalus_workspace_dir")
+    @classmethod
+    def _resolve_workspace(cls, value: str) -> str:
         if value:
             return str(Path(value).expanduser().resolve())
         return value
