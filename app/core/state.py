@@ -68,6 +68,14 @@ class IssueRef(BaseModel):
     platform: str = ""  # "github" | "gitlab" | "" (auto-detect)
 
 
+class PRResult(BaseModel):
+    """Result returned after a PR/MR is created by the committer node."""
+
+    url: str
+    number: int
+    platform: str = ""   # "github" | "gitlab"
+
+
 class GraphState(BaseModel):
     """The complete state passed between LangGraph nodes."""
 
@@ -78,6 +86,9 @@ class GraphState(BaseModel):
 
     # ── Issue tracking ────────────────────────────────────────────────
     issue_ref: IssueRef | None = None   # parsed forge issue reference (if any)
+
+    # ── PR / MR result ────────────────────────────────────────────────
+    pr_result: PRResult | None = None   # set by committer_node after PR creation
 
     # ── User request ──────────────────────────────────────────────────
     user_request: str = ""
