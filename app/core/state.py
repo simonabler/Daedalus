@@ -36,6 +36,7 @@ class TodoItem(BaseModel):
     iteration_count: int = 0
     rework_count: int = 0
     test_fail_count: int = 0
+    coder_questions_asked: int = 0   # number of ask_human signals emitted for this item
 
 
 class WorkflowPhase(StrEnum):
@@ -89,6 +90,8 @@ class GraphState(BaseModel):
     coder_question_options: list[str] = Field(default_factory=list)  # suggested choices
     coder_question_asked_by: str = ""  # "coder_a" | "coder_b"
     coder_question_answer: str = ""    # human's answer (filled by UI/Telegram)
+    coder_question_urgency: str = "blocking"   # "blocking" | "advisory"
+    coder_question_default: str = ""           # default_if_skipped text (advisory only)
 
     # ── Plan Approval Gate (between planner and coder) ────────────────
     # The workflow halts at plan_approval_gate_node after planning until

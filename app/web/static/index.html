@@ -335,11 +335,29 @@
   .question-header .q-icon { font-size: 18px; }
   .question-header .q-title {
     flex: 1; font-size: 13px; font-weight: 700; color: var(--purple); letter-spacing: 0.5px;
-  }
-  .question-header .q-agent {
+  }  .question-header .q-agent {
     font-size: 10px; padding: 2px 8px; border-radius: 8px;
     background: #2a1a40; color: #c084fc; font-weight: 700; text-transform: uppercase;
   }
+  .question-header .q-urgency-badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 8px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .urgency-blocking { background: #3a1010; color: #f87171; }
+  .urgency-advisory { background: #2a1e00; color: #fbbf24; }
+  .question-default-hint {
+    margin-top: 6px; font-size: 11px; color: var(--text-faint); font-style: italic;
+    padding: 5px 10px; background: var(--surface2); border-radius: 4px;
+    border-left: 2px solid #fbbf24;
+  }
+  .btn-skip {
+    align-self: flex-end; padding: 8px 14px; background: transparent;
+    border: 1px solid var(--border-light); color: var(--text-dim); border-radius: 5px;
+    font-family: var(--font); font-size: 11px; font-weight: 700; cursor: pointer;
+    transition: opacity 0.15s, border-color 0.15s;
+  }
+  .btn-skip:hover { border-color: #fbbf24; color: #fbbf24; }
+  .btn-skip:disabled { opacity: 0.4; cursor: default; }
   .question-body { padding: 14px 16px; border-bottom: 1px solid #2a1a40; }
   .question-text {
     font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 0;
@@ -1179,34 +1197,50 @@ function showQuestionPanel(meta) {
   const panel = document.createElement('div');
   panel.className = 'question-panel';
 
-  const agentLabel = meta.asked_by === 'coder_a' ? 'CODER A · Claude' : 'CODER B · GPT';
+  const agentLabel  = meta.asked_by === 'coder_a' ? 'CODER A · Claude' : 'CODER B · GPT';
+  const urgency     = meta.urgency || 'blocking';
+  const isAdvisory  = urgency === 'advisory';
+  const urgencyText = isAdvisory ? '🟡 ADVISORY' : '🔴 BLOCKING';
+  const urgencyCls  = isAdvisory ? 'urgency-advisory' : 'urgency-blocking';
+  const default_    = meta.default_if_skipped || '';
 
   const contextHtml = meta.context
     ? `<div class="question-context">${esc(meta.context)}</div>` : '';
 
-  const options = meta.options || [];
+  const defaultHintHtml = (isAdvisory && default_)
+    ? `<div class="question-default-hint">If skipped: ${esc(default_)}</div>` : '';
+
+  const options    = meta.options || [];
   const optionsHtml = options.length
     ? `<div class="question-options">
         <div class="opt-label">Quick answers</div>
         ${options.map((o, i) => `<button class="btn-option" data-idx="${i}">${esc(o)}</button>`).join('')}
       </div>` : '';
 
+  const skipBtnHtml = isAdvisory
+    ? `<button class="btn-skip" id="btnSkip" title="Skip question and proceed with stated default">⚡ Skip — use default</button>` : '';
+
   panel.innerHTML = `
     <div class="question-header">
       <span class="q-icon">🤔</span>
       <span class="q-title">CODER IS ASKING</span>
+      <span class="q-urgency-badge ${urgencyCls}">${urgencyText}</span>
       <span class="q-agent">${esc(agentLabel)}</span>
     </div>
     <div class="question-body">
       <div class="question-text">${esc(meta.question)}</div>
       ${contextHtml}
+      ${defaultHintHtml}
     </div>
     ${optionsHtml}
     <div class="question-freetext">
       <div class="question-freetext-inner">
         <div class="ft-label">Custom answer</div>
         <input type="text" id="answerInput" placeholder="Type your answer…" autocomplete="off" />
-        <button class="btn-answer" id="btnAnswer">SEND</button>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          ${skipBtnHtml}
+          <button class="btn-answer" id="btnAnswer">SEND</button>
+        </div>
       </div>
     </div>`;
 
@@ -1218,6 +1252,12 @@ function showQuestionPanel(meta) {
   panel.querySelectorAll('.btn-option').forEach(btn => {
     btn.addEventListener('click', () => submitAnswer(btn.textContent.trim(), panel));
   });
+
+  // Skip button (advisory only)
+  const skipBtn = panel.querySelector('#btnSkip');
+  if (skipBtn) {
+    skipBtn.addEventListener('click', () => submitAnswer('__skip__', panel));
+  }
 
   // Free-text send
   panel.querySelector('#btnAnswer').addEventListener('click', () => {

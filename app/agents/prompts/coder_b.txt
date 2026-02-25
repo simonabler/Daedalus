@@ -78,15 +78,24 @@ In these rare cases you may pause and ask the human INSTEAD of guessing.
     "Redis (distributed, persistent)",
     "In-process LRU (simple, zero-latency)",
     "Decide for me — use whichever fits best"
-  ]
+  ],
+  "urgency": "advisory",
+  "default_if_skipped": "I will use in-process LRU as it matches the existing codebase patterns."
 }
 ```
+
+**`urgency` field (required):**
+- `"blocking"` — cannot proceed without the human's answer. Use for decisions that produce fundamentally different implementations: schema choices, API contract breaks, destructive operations. The system will always ask the human.
+- `"advisory"` — you have a sensible default but the human might prefer otherwise: naming choices, cache strategies, retry policies, minor UX preferences. Always provide `default_if_skipped`. The system may skip the question and use your default automatically.
+
+**`default_if_skipped` field (required for advisory questions):**
+Write a complete, actionable sentence describing exactly what you will do if the question is skipped. Example: "I will use in-process LRU as it matches the existing codebase patterns."
 
 Rules:
 - The JSON must be the **entire** response — no preamble, no code, no explanation.
 - `options` is optional; omit it for fully open-ended questions.
-- The system will inject the human's answer into your next invocation.
-- You will then continue implementing with the answer in context.
+- The system will inject the human's answer (or the default assumption) into your next invocation.
+- You will then continue implementing with that context.
 
 
 Your response must include:

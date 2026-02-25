@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     max_iterations_per_item: int = 5
     max_rework_cycles_per_item: int = 3
     shell_timeout_seconds: int = 120
+
+    # ── Coder question threshold ───────────────────────────────────────
+    # Controls when agents may interrupt the human with a clarifying question.
+    coder_question_max_per_item: int = 1
+    # "ask"          → advisory questions are forwarded to the human (default, existing behaviour)
+    # "auto_proceed" → advisory questions are skipped; coder uses default_if_skipped assumption
+    coder_question_advisory_mode: str = "ask"
     max_output_chars: int = 12_000
 
     # Token budget / cost limits (USD). Set to 0.0 to disable.
