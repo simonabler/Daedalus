@@ -34,10 +34,34 @@
   /* ── Header ──────────────────────────── */
   header {
     display: flex; align-items: center; justify-content: space-between;
+    position: relative;
     padding: 10px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--accent); }
+  header h1 { font-size: 14px; font-weight: 700; letter-spacing: 2px; color: var(--accent); position: relative; z-index: 1; }
+  .header-center-image {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 390px;
+    height: 30px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    pointer-events: none;
+    opacity: 0.95;
+  }
+  .header-center-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center center;
+    display: block;
+    filter: saturate(0.95) contrast(1.05);
+  }
   .header-status { display: flex; align-items: center; gap: 12px; }
+  .header-status { position: relative; z-index: 1; }
   .badge {
     padding: 3px 10px; border-radius: 10px; font-size: 10px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.8px;
@@ -596,6 +620,9 @@
 <body>
 <header>
   <h1>⚙ Daedalus</h1>
+  <div class="header-center-image" aria-hidden="true">
+    <img src="/images/daedalus.png" alt="">
+  </div>
   <div class="header-status">
     <span class="progress-text" id="progressText">—</span>
     <span class="badge badge-idle" id="badge">IDLE</span>

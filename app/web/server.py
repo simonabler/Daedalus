@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.core.checkpoints import checkpoint_manager
@@ -293,6 +294,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Daedadus", version="0.2.0", lifespan=lifespan)
+app.mount("/images", StaticFiles(directory=Path(__file__).resolve().parents[2] / "images"), name="images")
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────
