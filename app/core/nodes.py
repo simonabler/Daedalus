@@ -832,15 +832,44 @@ def context_loader_node(state: GraphState) -> dict:
 
     settings = get_settings()
     repo_root = (state.repo_root or settings.target_repo_path or "").strip()
+
+    # ── Dynamic workspace: clone or pull if no static path is configured ──
     if not repo_root:
-        emit_error("planner", "Context loader could not determine repository path.")
-        emit_node_end("planner", "Context Loader", "Failed (repo path missing)")
-        return {
-            "repo_facts": {"error": "Missing repository path", "fallback": True},
-            "context_loaded": False,
-            "stop_reason": "context_repo_path_missing",
-            "phase": WorkflowPhase.STOPPED,
-        }
+        repo_ref = (state.repo_ref or "").strip()
+        if not repo_ref:
+            emit_error("planner", "Context loader could not determine repository path.")
+            emit_node_end("planner", "Context Loader", "Failed (repo path missing)")
+            return {
+                "repo_facts": {"error": "Missing repository path", "fallback": True},
+                "context_loaded": False,
+                "stop_reason": "context_repo_path_missing",
+                "phase": WorkflowPhase.STOPPED,
+            }
+        try:
+            from infra.workspace import WorkspaceManager
+            workspace_dir = Path(settings.daedalus_workspace_dir).expanduser().resolve()
+            workspace = WorkspaceManager(workspace_dir)
+            emit_status(
+                "planner",
+                f"📥 Resolving workspace for {repo_ref!r} → {workspace_dir}",
+                **_progress_meta(state, "planning"),
+            )
+            resolved_path = workspace.resolve(repo_ref)
+            repo_root = str(resolved_path)
+            emit_status(
+                "planner",
+                f"✅ Workspace ready: {repo_root}",
+                **_progress_meta(state, "planning"),
+            )
+        except Exception as exc:
+            emit_error("planner", f"Workspace resolver failed for {repo_ref!r}: {exc}")
+            emit_node_end("planner", "Context Loader", "Failed (workspace error)")
+            return {
+                "repo_facts": {"error": f"Workspace error: {exc}", "fallback": True},
+                "context_loaded": False,
+                "stop_reason": "context_workspace_error",
+                "phase": WorkflowPhase.STOPPED,
+            }
 
     repo_path = Path(repo_root).resolve()
     if not repo_path.exists() or not repo_path.is_dir():
@@ -852,6 +881,10 @@ def context_loader_node(state: GraphState) -> dict:
             "stop_reason": "context_repo_path_invalid",
             "phase": WorkflowPhase.STOPPED,
         }
+
+    # Propagate resolved root into context var so all tools use it
+    from app.core.active_repo import set_repo_root as _set_repo_root
+    _set_repo_root(str(repo_path))
 
     emit_status("planner", "Reading repository documentation and structure", **_progress_meta(state, "planning"))
 
@@ -1007,6 +1040,7 @@ def context_loader_node(state: GraphState) -> dict:
         "repo_facts": repo_facts,
         "context_listing": _truncate_context_text(context_listing, limit=min(max_chars, 10000)),
         "context_loaded": True,
+        "repo_root": str(repo_path),  # persist resolved path (covers workspace case)
         "static_issues": static_issues,
         "call_graph": call_graph,
         "dependency_graph": dependency_graph,

@@ -303,16 +303,40 @@ def compile_graph():
     return graph.compile()
 
 
-async def run_workflow(user_request: str, repo_path: str) -> GraphState:
-    """Execute the full workflow for a user request."""
+async def run_workflow(
+    user_request: str,
+    repo_path: str,
+    repo_ref: str = "",
+) -> GraphState:
+    """Execute the full workflow for a user request.
+
+    Args:
+        user_request: Natural-language task description.
+        repo_path:    Absolute local path to the repository (static override).
+                      Pass an empty string to let the WorkspaceManager clone
+                      the repo on-demand using *repo_ref*.
+        repo_ref:     Forge reference for dynamic workspace resolution —
+                      URL, ``owner/name``, or ``host/owner/name``.
+                      Only used when *repo_path* is empty.
+    """
     from app.core.config import get_settings
+    from app.core.active_repo import set_repo_root
 
     settings = get_settings()
+
+    resolved_repo_path = repo_path or settings.target_repo_path or ""
     compiled = compile_graph()
+
+    # Pre-seed the context var if we already know the path (static case).
+    # When repo_path is empty, context_loader_node will call WorkspaceManager
+    # and then call set_repo_root itself after cloning.
+    if resolved_repo_path:
+        set_repo_root(resolved_repo_path)
 
     initial_state = GraphState(
         user_request=user_request,
-        repo_root=repo_path or settings.target_repo_path,
+        repo_root=resolved_repo_path,
+        repo_ref=repo_ref,
         execution_platform=platform.platform(),
         phase=WorkflowPhase.PLANNING,
         active_coder="coder_a",
@@ -320,9 +344,10 @@ async def run_workflow(user_request: str, repo_path: str) -> GraphState:
     )
 
     logger.info(
-        "Starting workflow | request: %s | repo: %s",
+        "Starting workflow | request: %s | repo: %s | ref: %s",
         user_request[:100],
-        initial_state.repo_root,
+        initial_state.repo_root or "(dynamic)",
+        repo_ref or "(none)",
     )
 
     final_state_dict = await asyncio.to_thread(compiled.invoke, initial_state.model_dump())

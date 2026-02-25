@@ -17,10 +17,13 @@ def setup_test_repo(tmp_path):
     (tmp_path / "subdir").mkdir()
     (tmp_path / "subdir" / "nested.py").write_text("print('hello')")
 
+    from app.core.active_repo import set_repo_root, clear_repo_root
+    set_repo_root(str(tmp_path))
     with patch("app.tools.filesystem.get_settings") as mock_settings:
         mock_settings.return_value.target_repo_path = str(tmp_path)
         mock_settings.return_value.max_output_chars = 10000
         yield tmp_path
+    clear_repo_root()
 
 
 class TestResolvesSafe:

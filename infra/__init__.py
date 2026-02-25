@@ -21,6 +21,7 @@ from infra.factory import get_forge_client, get_github_client, get_gitlab_client
 from infra.forge import ForgeClient, ForgeError, Issue, PRRequest, PRResult
 from infra.github_client import GitHubClient
 from infra.gitlab_client import GitLabClient
+from infra.workspace import WorkspaceError, WorkspaceInfo, WorkspaceManager
 
 __all__ = [
     # Protocol & models
@@ -36,4 +37,8 @@ __all__ = [
     "get_forge_client",
     "get_github_client",
     "get_gitlab_client",
+    # Workspace
+    "WorkspaceManager",
+    "WorkspaceInfo",
+    "WorkspaceError",
 ]

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
-from app.core.config import get_settings
+from app.core.active_repo import get_repo_root
 from app.core.logging import get_logger
 from app.tools.terminal import run_terminal
 
@@ -35,8 +35,7 @@ def run_tests(project_type: str = "auto") -> str:
 
     project_type: 'python', 'node', 'dotnet', or 'auto' (detect).
     """
-    settings = get_settings()
-    root = settings.target_repo_path
+    root = get_repo_root()
 
     types = _detect_project_type(root) if project_type == "auto" else [project_type]
 
@@ -65,8 +64,7 @@ def run_linter(project_type: str = "auto") -> str:
 
     project_type: 'python', 'node', 'dotnet', or 'auto'.
     """
-    settings = get_settings()
-    root = settings.target_repo_path
+    root = get_repo_root()
 
     types = _detect_project_type(root) if project_type == "auto" else [project_type]
 
@@ -92,8 +90,7 @@ def run_build(project_type: str = "auto") -> str:
 
     project_type: 'python', 'node', 'dotnet', or 'auto'.
     """
-    settings = get_settings()
-    root = settings.target_repo_path
+    root = get_repo_root()
 
     types = _detect_project_type(root) if project_type == "auto" else [project_type]
 

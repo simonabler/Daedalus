@@ -215,12 +215,17 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global _current_state
     try:
         settings = get_settings()
+        # repo_ref may be passed as part of the task text in future; for now
+        # fall back to the static TARGET_REPO_PATH.
+        repo_path = settings.target_repo_path
+        repo_ref  = ""
         _current_state = GraphState(
             user_request=task_text,
-            repo_root=settings.target_repo_path,
+            repo_root=repo_path,
+            repo_ref=repo_ref,
             phase=WorkflowPhase.PLANNING,
         )
-        final_state = await run_workflow(task_text, settings.target_repo_path)
+        final_state = await run_workflow(task_text, repo_path, repo_ref=repo_ref)
         _current_state = final_state
 
         done  = final_state.completed_items

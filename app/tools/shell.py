@@ -10,6 +10,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from app.core.active_repo import get_repo_root
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -77,7 +78,7 @@ def run_shell(command: str, working_dir: str = ".") -> str:
         return "DISABLED: run_shell is only enabled on non-Windows systems."
 
     settings = get_settings()
-    root = Path(settings.target_repo_path).resolve()
+    root = Path(get_repo_root()).resolve()
     cwd = (root / working_dir).resolve()
 
     if not _is_within_root(cwd, root):

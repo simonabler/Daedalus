@@ -11,6 +11,8 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="run_shell is di
 @pytest.fixture
 def mock_settings(tmp_path):
     """Mock settings pointing to a temp directory."""
+    from app.core.active_repo import set_repo_root, clear_repo_root
+    set_repo_root(str(tmp_path))
     with patch("app.tools.shell.get_settings") as ms:
         ms.return_value.target_repo_path = str(tmp_path)
         ms.return_value.max_output_chars = 10000
@@ -18,6 +20,7 @@ def mock_settings(tmp_path):
         ms.return_value.git_author_name = "test"
         ms.return_value.git_author_email = "test@test"
         yield tmp_path
+    clear_repo_root()
 
 
 class TestBlocklist:

@@ -12,9 +12,12 @@ import pytest
 @pytest.fixture
 def temp_repo(tmp_path):
     """Create a temporary repo directory and patch settings to use it."""
+    from app.core.active_repo import set_repo_root, clear_repo_root
+    set_repo_root(str(tmp_path))
     with patch("app.core.memory.get_settings") as mock:
         mock.return_value.target_repo_path = str(tmp_path)
         yield tmp_path
+    clear_repo_root()
 
 
 class TestEnsureMemoryFiles:
