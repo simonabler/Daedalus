@@ -66,6 +66,7 @@ class EventCategory(str, Enum):
     APPROVAL_DONE = "approval_done"
     CODER_QUESTION = "coder_question"
     CODER_ANSWER = "coder_answer"
+    PLAN_APPROVAL = "plan_approval"     # planner finished; waiting for human GO
 
 
 @dataclass
@@ -194,6 +195,36 @@ def emit_agent_token(agent: str, token: str) -> None:
         category=EventCategory.AGENT_TOKEN,
         agent=agent,
         title=token,
+    ))
+
+
+def emit_plan_approval_needed(
+    agent: str,
+    plan_summary: str,
+    items: list,
+) -> None:
+    """Emit when the planner has finished and is waiting for human GO.
+
+    The UI renders a plan approval panel; Telegram sends inline buttons.
+    """
+    emit(WorkflowEvent(
+        category=EventCategory.PLAN_APPROVAL,
+        agent=agent,
+        title=f"📋 Plan ready — {len(items)} items — awaiting your approval",
+        detail=plan_summary,
+        metadata={
+            "plan_summary": plan_summary,
+            "items_count": len(items),
+            "items": [
+                {
+                    "id": getattr(i, "id", ""),
+                    "description": getattr(i, "description", ""),
+                    "task_type": getattr(i, "task_type", "coding"),
+                    "assigned_agent": getattr(i, "assigned_agent", "") or "",
+                }
+                for i in items
+            ],
+        },
     ))
 
 

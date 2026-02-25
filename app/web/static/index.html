@@ -394,6 +394,85 @@
   .intel-btn:hover { background: var(--surface3); }
   .intel-btn.active { background: var(--accent-dim); border-color: var(--accent); }
 
+  /* ── Plan Approval Panel ─────────────── */
+  .plan-approval-panel {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid #60a5fa; background: #0a1628;
+    animation: slide-in 0.25s ease;
+  }
+  .plan-approval-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #0f1e38; border-bottom: 1px solid #1e3a6e;
+  }
+  .plan-approval-header .pa-icon { font-size: 18px; }
+  .plan-approval-header .pa-title {
+    flex: 1; font-size: 13px; font-weight: 700; color: #60a5fa; letter-spacing: 0.5px;
+  }
+  .plan-approval-header .pa-count {
+    font-size: 11px; color: var(--text-dim);
+    background: #1e3a6e; padding: 2px 8px; border-radius: 8px;
+  }
+  .plan-approval-items {
+    padding: 10px 16px; border-bottom: 1px solid #1e3a6e;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .plan-item-row {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 12px; color: var(--text-dim); padding: 2px 0;
+  }
+  .plan-item-num { color: var(--text-faint); font-size: 11px; min-width: 18px; }
+  .plan-item-type {
+    padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.3px; flex-shrink: 0;
+  }
+  .type-coding     { background: #1a2a40; color: #60a5fa; }
+  .type-testing    { background: #1a2a1a; color: #4ade80; }
+  .type-documentation { background: #2a1a2a; color: #c084fc; }
+  .type-ops        { background: #2a1a0a; color: #fb923c; }
+  .plan-item-desc  { flex: 1; }
+  .plan-item-agent { font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
+  .plan-approval-feedback {
+    padding: 10px 16px; border-bottom: 1px solid #1e3a6e;
+    display: none; flex-direction: column; gap: 6px;
+  }
+  .plan-approval-feedback.visible { display: flex; }
+  .plan-approval-feedback label {
+    font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .plan-approval-feedback textarea {
+    background: var(--surface2); border: 1px solid #1e3a6e; border-radius: 5px;
+    color: var(--text); font-family: var(--font); font-size: 12px; padding: 8px 10px;
+    resize: vertical; min-height: 60px; outline: none;
+  }
+  .plan-approval-feedback textarea:focus { border-color: #60a5fa; }
+  .plan-approval-actions {
+    display: flex; gap: 8px; padding: 12px 16px; flex-wrap: wrap;
+  }
+  .btn-plan-approve {
+    flex: 2; padding: 9px 0; border: none; border-radius: 6px;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.6px; cursor: pointer; transition: opacity 0.15s;
+    background: #166534; color: #4ade80;
+  }
+  .btn-plan-approve:hover { background: #15803d; }
+  .btn-plan-revise {
+    flex: 2; padding: 9px 0; border: 1px solid #1e3a6e; border-radius: 6px;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.6px; cursor: pointer; transition: opacity 0.15s;
+    background: transparent; color: #60a5fa;
+  }
+  .btn-plan-revise:hover { background: #0f1e38; }
+  .btn-plan-cancel {
+    flex: 1; padding: 9px 0; border: none; border-radius: 6px;
+    font-family: var(--font); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.6px; cursor: pointer; transition: opacity 0.15s;
+    background: #7f1d1d; color: #f87171;
+  }
+  .btn-plan-cancel:hover { background: #991b1b; }
+  .btn-plan-approve:disabled, .btn-plan-revise:disabled, .btn-plan-cancel:disabled {
+    opacity: 0.4; cursor: default;
+  }
+
   /* ── Intelligence Panel ───────────────── */
   .intel-panel {
     position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 100vw;
@@ -991,6 +1070,105 @@ async function submitApproval(approved, panel) {
   }
 }
 
+// ── Plan Approval Panel ───────────────────────
+let _planApprovalPanel = null;
+
+function showPlanApprovalPanel(meta) {
+  if (_planApprovalPanel) _planApprovalPanel.remove();
+
+  const items    = meta.items || [];
+  const count    = meta.items_count || items.length;
+
+  const itemsHTML = items.map((item, idx) => {
+    const typeClass = 'type-' + (item.task_type || 'coding').toLowerCase().replace(/[^a-z]/g, '');
+    const agent     = item.assigned_agent ? `→ ${esc(item.assigned_agent)}` : '';
+    return `<div class="plan-item-row">
+      <span class="plan-item-num">${idx + 1}.</span>
+      <span class="plan-item-type ${typeClass}">${esc(item.task_type || 'coding')}</span>
+      <span class="plan-item-desc">${esc(item.description || '')}</span>
+      <span class="plan-item-agent">${agent}</span>
+    </div>`;
+  }).join('');
+
+  const panel = document.createElement('div');
+  panel.className = 'plan-approval-panel';
+  panel.innerHTML = `
+    <div class="plan-approval-header">
+      <span class="pa-icon">📋</span>
+      <span class="pa-title">PLAN READY — YOUR APPROVAL REQUIRED</span>
+      <span class="pa-count">${count} item${count !== 1 ? 's' : ''}</span>
+    </div>
+    <div class="plan-approval-items">${itemsHTML || '<div style="color:var(--text-faint);font-size:12px">(no items)</div>'}</div>
+    <div class="plan-approval-feedback" id="paFeedback">
+      <label>Revision note for the planner</label>
+      <textarea id="paFeedbackText" placeholder="Describe what to change or add…"></textarea>
+    </div>
+    <div class="plan-approval-actions">
+      <button class="btn-plan-approve" id="btnPlanApprove">✅ Approve &amp; Start Coding</button>
+      <button class="btn-plan-revise"  id="btnPlanRevise">✏️ Approve with Note</button>
+      <button class="btn-plan-cancel"  id="btnPlanCancel">❌ Cancel</button>
+    </div>`;
+
+  chat.appendChild(panel);
+  _planApprovalPanel = panel;
+  scrollBottom();
+
+  const btnApprove = panel.querySelector('#btnPlanApprove');
+  const btnRevise  = panel.querySelector('#btnPlanRevise');
+  const btnCancel  = panel.querySelector('#btnPlanCancel');
+  const feedback   = panel.querySelector('#paFeedback');
+  const fbText     = panel.querySelector('#paFeedbackText');
+
+  let reviseMode = false;
+
+  btnRevise.addEventListener('click', () => {
+    if (!reviseMode) {
+      reviseMode = true;
+      feedback.classList.add('visible');
+      btnRevise.textContent = '📤 Send Revision Request';
+      fbText.focus();
+    } else {
+      // Submit with feedback
+      submitPlanApproval(true, fbText.value.trim(), panel);
+    }
+  });
+
+  btnApprove.addEventListener('click', () => submitPlanApproval(true, '', panel));
+  btnCancel.addEventListener('click',  () => submitPlanApproval(false, '', panel));
+}
+
+async function submitPlanApproval(approved, feedback, panel) {
+  const btns = panel.querySelectorAll('button');
+  btns.forEach(b => b.disabled = true);
+
+  try {
+    const res = await fetch('/api/plan-approve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({approved, feedback: feedback || ''}),
+    });
+    const data = await res.json();
+
+    const msg = document.createElement('div');
+    if (!approved) {
+      msg.className = 'msg msg-status status-error';
+      msg.textContent = '❌ Task cancelled by user.';
+    } else if (feedback) {
+      msg.className = 'msg msg-status';
+      msg.textContent = '✏️ Revision requested — planner will update the plan…';
+    } else {
+      msg.className = 'msg msg-status status-verdict-approve';
+      msg.textContent = '✅ Plan approved — 🚀 coding started!';
+    }
+    panel.replaceWith(msg);
+    _planApprovalPanel = null;
+    scrollBottom();
+  } catch (err) {
+    btns.forEach(b => b.disabled = false);
+    console.error('plan-approve error', err);
+  }
+}
+
 // ── Coder Question Panel ─────────────────────
 let _questionPanel = null;
 
@@ -1151,6 +1329,10 @@ function handleEvent(evt) {
 
     case 'approval_needed':
       showApprovalPanel(metadata || {});
+      break;
+
+    case 'plan_approval':
+      showPlanApprovalPanel(metadata || {});
       break;
 
     case 'approval_done':

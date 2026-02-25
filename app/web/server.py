@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.core.checkpoints import checkpoint_manager
@@ -52,6 +52,8 @@ class StatusResponse(BaseModel):
     items_done: int
     token_budget: dict = {}
     context_usage: dict = {}
+    needs_plan_approval: bool = False
+    pending_plan_items: list = []
 
 
 class ApprovalRequest(BaseModel):
@@ -60,6 +62,11 @@ class ApprovalRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+class PlanApproveRequest(BaseModel):
+    approved: bool
+    feedback: str = ""   # optional revision note; empty = pure GO
 
 
 # ── WebSocket broadcast (wired to event bus) ─────────────────────────────
@@ -309,6 +316,11 @@ async def get_status():
         items_done=_current_state.completed_items,
         token_budget=_current_state.token_budget or {},
         context_usage=_context_usage_summary,
+        needs_plan_approval=_current_state.needs_plan_approval,
+        pending_plan_items=[
+            {"id": i.id, "description": i.description, "task_type": i.task_type}
+            for i in _current_state.todo_items
+        ] if _current_state.needs_plan_approval else [],
     )
 
 
@@ -451,6 +463,45 @@ async def submit_coder_answer(req: AnswerRequest):
         await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
 
     return {"status": "answer_submitted", "answer": answer}
+
+
+@app.post("/api/plan-approve")
+async def plan_approve(req: PlanApproveRequest):
+    """Human approves (or rejects) the planner's TODO plan before coding starts.
+
+    Request body:
+      approved (bool):  True = GO, False = cancel task
+      feedback (str):   Optional revision note. If non-empty the planner revises
+                        the plan once before handing off to the coder.
+    """
+    global _current_state
+
+    if not isinstance(_current_state, GraphState):
+        return JSONResponse({"error": "No active workflow"}, status_code=400)
+
+    if not _current_state.needs_plan_approval:
+        return JSONResponse({"error": "No plan awaiting approval"}, status_code=400)
+
+    if not req.approved:
+        # Human cancelled — stop the workflow
+        _current_state.phase = WorkflowPhase.STOPPED
+        _current_state.stop_reason = "plan_rejected_by_human"
+        _current_state.needs_plan_approval = False
+        from app.core.events import emit_status as _emit
+        _emit("system", "❌ Plan rejected by human — task cancelled.")
+        return {"status": "stopped", "stop_reason": "plan_rejected_by_human"}
+
+    # GO (with or without feedback)
+    _current_state.plan_approved = True
+    _current_state.plan_approval_feedback = req.feedback.strip()
+    _current_state.needs_plan_approval = False
+
+    repo_root = str(_current_state.repo_root or "")
+    if _task_queue is not None:
+        await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
+
+    action = "revision_requested" if req.feedback.strip() else "coding_started"
+    return {"status": "approved", "action": action}
 
 
 @app.post("/api/approve")
