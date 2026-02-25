@@ -180,9 +180,10 @@ _ISSUE_URL_RE = re.compile(
 # Matches #42 or issue #42 or issue 42 when a repo ref can be found alongside it
 _HASH_ISSUE_RE = re.compile(r"(?:issue\s+)?#(?P<id>\d+)\b", re.IGNORECASE)
 
-# Matches "issue 42 in owner/repo" or "issue 42 for owner/repo"
+# Matches "issue 42 in owner/repo", "issue #42 for owner/repo"
+# The optional # handles both "issue 7" and "issue #7" spellings.
 _BARE_ISSUE_RE = re.compile(
-    r"\bissue\s+(?P<id>\d+)\s+(?:in|for|on|at)\s+(?P<repo>[A-Za-z0-9_./-]+)",
+    r"\bissue\s+#?(?P<id>\d+)\s+(?:in|for|on|at)\s+(?P<repo>[A-Za-z0-9_./-]+)",
     re.IGNORECASE,
 )
 
