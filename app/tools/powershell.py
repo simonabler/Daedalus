@@ -102,13 +102,29 @@ def run_powershell(command: str, working_dir: str = ".") -> str:
         "GIT_AUTHOR_EMAIL": settings.git_author_email,
     }
 
+    # Force UTF-8 no-BOM output for all file writes and console I/O.
+    # $PSDefaultParameterValues applies -Encoding to every cmdlet that accepts it.
+    # [Console] and $OutputEncoding fix the subprocess stdout/stderr pipe encoding.
+    utf8_preamble = (
+        "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "[Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false); "
+        "$PSDefaultParameterValues['Out-File:Encoding']     = 'utf8NoBOM'; "
+        "$PSDefaultParameterValues['Set-Content:Encoding']  = 'utf8NoBOM'; "
+        "$PSDefaultParameterValues['Add-Content:Encoding']  = 'utf8NoBOM'; "
+        "$PSDefaultParameterValues['Export-Csv:Encoding']   = 'utf8NoBOM'; "
+    )
+    full_command = utf8_preamble + command
+
     try:
         result = subprocess.run(
-            [ps_exe, "-NoProfile", "-NonInteractive", "-Command", command],
+            [ps_exe, "-NoProfile", "-NonInteractive", "-Command", full_command],
             shell=False,
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=settings.shell_timeout_seconds,
             env=env,
         )

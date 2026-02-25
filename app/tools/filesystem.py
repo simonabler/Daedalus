@@ -57,7 +57,19 @@ def read_file(path: str) -> str:
     target = _resolve_safe(path)
     if not target.is_file():
         return f"ERROR: Not a file: {path}"
-    content = target.read_text(encoding="utf-8", errors="replace")
+    # Read raw bytes first so we can detect and strip any BOM before decoding.
+    raw = target.read_bytes()
+    if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
+        # UTF-32 BOM (LE or BE)
+        content = raw.decode("utf-32", errors="replace").lstrip("\ufeff")
+    elif raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        # UTF-16 BOM (LE or BE)
+        content = raw.decode("utf-16", errors="replace").lstrip("\ufeff")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        # UTF-8 BOM — decode and strip
+        content = raw[3:].decode("utf-8", errors="replace")
+    else:
+        content = raw.decode("utf-8", errors="replace")
     logger.info("read_file  | %s (%d chars)", path, len(content))
     return _truncate(content)
 
@@ -67,6 +79,8 @@ def write_file(path: str, content: str) -> str:
     """Write (create or overwrite) a file. `path` is relative to repo root."""
     target = _resolve_safe(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # Strip any Unicode BOM the LLM may have included in the content string.
+    content = content.lstrip("\ufeff")
     target.write_text(content, encoding="utf-8")
     logger.info("write_file | %s (%d chars)", path, len(content))
     return f"OK: wrote {len(content)} chars to {path}"
@@ -78,7 +92,16 @@ def patch_file(path: str, old: str, new: str) -> str:
     target = _resolve_safe(path)
     if not target.is_file():
         return f"ERROR: File not found: {path}"
-    text = target.read_text(encoding="utf-8")
+    raw = target.read_bytes()
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        text = raw.decode("utf-16", errors="replace").lstrip("\ufeff")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        text = raw[3:].decode("utf-8", errors="replace")
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    # Also strip BOM from search/replace strings if agent passes them
+    old = old.lstrip("\ufeff")
+    new = new.lstrip("\ufeff")
     if old not in text:
         return f"ERROR: Search string not found in {path}"
     updated = text.replace(old, new, 1)
