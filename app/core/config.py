@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # Base URL of your GitLab instance.  Use "https://gitlab.com" for
     # gitlab.com or the full URL for a self-hosted instance.
     gitlab_url: str = "https://gitlab.com"
+
+    # ── Pull / Merge Request automation ───────────────────────────────
+    # Set to False to skip PR/MR creation after every commit+push.
+    # Env var: AUTO_CREATE_PR=false
+    auto_create_pr: bool = True
+
     max_output_chars: int = 12_000
 
     # Token budget / cost limits (USD). Set to 0.0 to disable.

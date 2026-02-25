@@ -59,6 +59,7 @@ class StatusResponse(BaseModel):
     pending_plan_items: list = []
     registered_repos: list = []   # repos from repos.yaml
     issue_ref: dict | None = None  # active issue being worked on
+    pr_result: dict | None = None  # PR/MR opened after push
 
 
 class ApprovalRequest(BaseModel):
@@ -385,6 +386,7 @@ async def get_status():
         ] if _current_state.needs_plan_approval else [],
         registered_repos=_repos,
         issue_ref=_current_state.issue_ref.model_dump() if _current_state.issue_ref else None,
+        pr_result=_current_state.pr_result.model_dump() if _current_state.pr_result else None,
     )
 
 

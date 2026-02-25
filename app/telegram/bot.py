@@ -104,6 +104,11 @@ def _on_workflow_event(event: WorkflowEvent) -> None:
             _send_issue_loaded_notification(event.metadata or {}),
             loop,
         )
+    elif event.category == EventCategory.COMMIT and event.metadata.get("pr_url"):
+        asyncio.run_coroutine_threadsafe(
+            _send_pr_notification(event.metadata),
+            loop,
+        )
     elif event.category == EventCategory.STATUS:
         phase = (event.metadata or {}).get("phase", "")
         if phase in ("complete", "stopped"):
@@ -119,6 +124,8 @@ async def _send_approval_notification(meta: dict) -> None:
     files      = meta.get("files", [])
     triggers   = meta.get("triggers", [])
     git_status = meta.get("git_status", "")
+    will_create_pr = meta.get("will_create_pr", False)
+    branch     = meta.get("branch", "")
 
     trigger_lines = "\n".join(
         f"  \u2022 {t.get('reason', t.get('type', '?'))}" for t in triggers
@@ -132,12 +139,19 @@ async def _send_approval_notification(meta: dict) -> None:
         snippet = git_status[:600]
         status_snippet = f"\n\n*Git status:*\n```\n{snippet}\n```"
 
+    pr_note = ""
+    if will_create_pr:
+        pr_note = "\n\n🔗 *A PR/MR will be opened automatically after push.*"
+        if branch:
+            pr_note += f"\nBranch: `{branch}`"
+
     text = (
         f"\u26a0\ufe0f *HUMAN APPROVAL REQUIRED*\n\n"
         f"*Summary:* {summary}\n\n"
         f"*Reasons:*\n{trigger_lines}\n\n"
         f"*Changed files:*\n{file_lines}"
-        f"{status_snippet}\n\n"
+        f"{status_snippet}"
+        f"{pr_note}\n\n"
         f"Use the buttons below or /approve / /reject."
     )
 
@@ -183,6 +197,22 @@ async def _send_question_notification(meta: dict) -> None:
     await _notify_all(text, reply_markup=keyboard)
 
 
+async def _send_pr_notification(meta: dict) -> None:
+    """Send a PR/MR creation notification to all allowed users."""
+    url    = meta.get("pr_url", "")
+    number = meta.get("pr_number", "?")
+    label  = "MR" if meta.get("platform") == "gitlab" else "PR"
+    branch = meta.get("branch", "")
+
+    lines = [f"✅ *{label} #{number} opened!*"]
+    if branch:
+        lines.append(f"Branch: `{branch}`")
+    if url:
+        lines.append(f"🔗 {url}")
+
+    await _notify_all("\n".join(lines))
+
+
 async def _send_issue_loaded_notification(extra: dict) -> None:
     """Notify all users that Daedalus picked up a forge issue."""
     number = extra.get("issue_number", "?")
@@ -214,6 +244,11 @@ async def _send_completion_notification(title: str, phase: str) -> None:
             lines.append(f"Branch: `{_current_state.branch_name}`")
         if _current_state.stop_reason and _current_state.stop_reason != "user_rejected":
             lines.append(f"Stop reason: {_current_state.stop_reason}")
+        # Show PR/MR link if created
+        if _current_state.pr_result:
+            pr = _current_state.pr_result
+            label = "MR" if pr.platform == "gitlab" else "PR"
+            lines.append(f"\n🔗 *{label} #{pr.number}:* {pr.url}")
 
     await _notify_all("\n".join(lines))
 

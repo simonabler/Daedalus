@@ -441,3 +441,19 @@ def emit_coder_answer(asked_by: str, answer: str, item_id: str = "") -> None:
         detail=answer,
         metadata={"asked_by": asked_by, "answer": answer, "item_id": item_id},
     ))
+
+def emit_pr_created(url: str, number: int, platform: str, branch: str) -> None:
+    """Emit after a PR/MR is successfully created by committer_node."""
+    label = "MR" if platform == "gitlab" else "PR"
+    emit(WorkflowEvent(
+        category=EventCategory.COMMIT,
+        agent="system",
+        title=f"🔗 {label} #{number} opened: {url}",
+        metadata={
+            "pr_url": url,
+            "pr_number": number,
+            "platform": platform,
+            "branch": branch,
+            "label": label,
+        },
+    ))
