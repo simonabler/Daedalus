@@ -99,6 +99,11 @@ def _on_workflow_event(event: WorkflowEvent) -> None:
             _send_question_notification(event.metadata),
             loop,
         )
+    elif event.category == EventCategory.STATUS and event.title == "issue_loaded":
+        asyncio.run_coroutine_threadsafe(
+            _send_issue_loaded_notification(event.metadata or {}),
+            loop,
+        )
     elif event.category == EventCategory.STATUS:
         phase = (event.metadata or {}).get("phase", "")
         if phase in ("complete", "stopped"):
@@ -178,6 +183,24 @@ async def _send_question_notification(meta: dict) -> None:
     await _notify_all(text, reply_markup=keyboard)
 
 
+async def _send_issue_loaded_notification(extra: dict) -> None:
+    """Notify all users that Daedalus picked up a forge issue."""
+    number = extra.get("issue_number", "?")
+    title  = extra.get("issue_title", "")
+    repo   = extra.get("repo_ref", "")
+    url    = extra.get("issue_url", "")
+
+    lines = [
+        f"📋 *Issue #{number} loaded:* \"{title}\"",
+        f"📁 Repo: `{repo}`",
+        "🔄 Starting analysis…",
+    ]
+    if url:
+        lines.append(f"🔗 {url}")
+
+    await _notify_all("\n".join(lines))
+
+
 async def _send_completion_notification(title: str, phase: str) -> None:
     """Send a workflow-completion summary to all allowed users."""
     icon = "\U0001f389" if phase == "complete" else "\U0001f6d1"
@@ -215,17 +238,26 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global _current_state
     try:
         settings = get_settings()
-        # repo_ref may be passed as part of the task text in future; for now
-        # fall back to the static TARGET_REPO_PATH.
         repo_path = settings.target_repo_path
-        repo_ref  = ""
+
+        # Extract repo_ref and issue_ref from the task text
+        from app.core.task_routing import parse_issue_ref
+        from app.core.nodes import _extract_repo_ref
+        repo_ref = _extract_repo_ref(task_text) or ""
+        issue_ref = parse_issue_ref(task_text, fallback_repo_ref=repo_ref) or None
+
+        # If issue_ref provides a better repo_ref, use it
+        if issue_ref and not repo_ref:
+            repo_ref = issue_ref.repo_ref
+
         _current_state = GraphState(
             user_request=task_text,
             repo_root=repo_path,
             repo_ref=repo_ref,
+            issue_ref=issue_ref,
             phase=WorkflowPhase.PLANNING,
         )
-        final_state = await run_workflow(task_text, repo_path, repo_ref=repo_ref)
+        final_state = await run_workflow(task_text, repo_path, repo_ref=repo_ref, issue_ref=issue_ref)
         _current_state = final_state
 
         done  = final_state.completed_items

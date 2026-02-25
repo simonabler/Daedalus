@@ -60,6 +60,14 @@ class WorkflowPhase(StrEnum):
     STOPPED = "stopped"
 
 
+class IssueRef(BaseModel):
+    """Parsed reference to a forge issue (GitHub or GitLab)."""
+
+    repo_ref: str       # registry name, owner/name, or full URL
+    issue_id: int
+    platform: str = ""  # "github" | "gitlab" | "" (auto-detect)
+
+
 class GraphState(BaseModel):
     """The complete state passed between LangGraph nodes."""
 
@@ -67,6 +75,9 @@ class GraphState(BaseModel):
     repo_root: str = ""        # absolute local path (set by context_loader or caller)
     repo_ref: str = ""         # forge reference: URL or "owner/name" or "host/owner/name"
     branch_name: str = ""
+
+    # ── Issue tracking ────────────────────────────────────────────────
+    issue_ref: IssueRef | None = None   # parsed forge issue reference (if any)
 
     # ── User request ──────────────────────────────────────────────────
     user_request: str = ""

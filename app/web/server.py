@@ -43,6 +43,7 @@ class TaskRequest(BaseModel):
     task: str
     repo_path: str = ""   # static local path (backward-compatible override)
     repo_ref: str = ""    # forge reference for dynamic workspace (URL / owner/name)
+    issue_ref: dict | None = None  # serialised IssueRef (optional)
 
 
 class StatusResponse(BaseModel):
@@ -57,6 +58,7 @@ class StatusResponse(BaseModel):
     needs_plan_approval: bool = False
     pending_plan_items: list = []
     registered_repos: list = []   # repos from repos.yaml
+    issue_ref: dict | None = None  # active issue being worked on
 
 
 class ApprovalRequest(BaseModel):
@@ -162,15 +164,32 @@ async def _process_tasks():
             repo = task_req.repo_path or settings.target_repo_path
             repo_ref = task_req.repo_ref or ""
 
+            # Deserialise issue_ref dict → IssueRef model (if present)
+            from app.core.state import IssueRef as _IssueRef
+            from app.core.task_routing import parse_issue_ref as _parse_issue_ref
+            issue_ref_obj = None
+            if task_req.issue_ref:
+                try:
+                    issue_ref_obj = _IssueRef(**task_req.issue_ref)
+                except Exception:
+                    pass
+            if issue_ref_obj is None:
+                # Try to auto-detect from task text
+                extracted_ref = repo_ref or ""
+                issue_ref_obj = _parse_issue_ref(task_req.task, fallback_repo_ref=extracted_ref)
+                if issue_ref_obj and not repo_ref:
+                    repo_ref = issue_ref_obj.repo_ref
+
             _current_state = GraphState(
                 user_request=task_req.task,
                 repo_root=repo,
                 repo_ref=repo_ref,
+                issue_ref=issue_ref_obj,
                 phase=WorkflowPhase.PLANNING,
             )
             await _broadcast_raw("status", {"phase": "planning", "task": task_req.task})
 
-            final_state = await run_workflow(task_req.task, repo, repo_ref=repo_ref)
+            final_state = await run_workflow(task_req.task, repo, repo_ref=repo_ref, issue_ref=issue_ref_obj)
             _current_state = final_state
 
             # If the workflow halted waiting for human approval, register it in
@@ -365,6 +384,7 @@ async def get_status():
             for i in _current_state.todo_items
         ] if _current_state.needs_plan_approval else [],
         registered_repos=_repos,
+        issue_ref=_current_state.issue_ref.model_dump() if _current_state.issue_ref else None,
     )
 
 
@@ -624,6 +644,7 @@ async def websocket_endpoint(ws: WebSocket):
                         task=msg["task"],
                         repo_path=msg.get("repo_path", ""),
                         repo_ref=msg.get("repo_ref", ""),
+                        issue_ref=msg.get("issue_ref"),
                     )
                     await _task_queue.put(req)
                     await ws.send_text(json.dumps({"type": "ack", "data": "Task queued"}))

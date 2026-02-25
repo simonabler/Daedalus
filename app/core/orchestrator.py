@@ -307,6 +307,7 @@ async def run_workflow(
     user_request: str,
     repo_path: str,
     repo_ref: str = "",
+    issue_ref=None,
 ) -> GraphState:
     """Execute the full workflow for a user request.
 
@@ -316,8 +317,9 @@ async def run_workflow(
                       Pass an empty string to let the WorkspaceManager clone
                       the repo on-demand using *repo_ref*.
         repo_ref:     Forge reference for dynamic workspace resolution —
-                      URL, ``owner/name``, or ``host/owner/name``.
-                      Only used when *repo_path* is empty.
+                      URL, ``owner/name``, or ``host/owner/name``.\n                      Only used when *repo_path* is empty.
+        issue_ref:    Optional :class:`~app.core.state.IssueRef` if the task
+                      was triggered by a forge issue reference.
     """
     from app.core.config import get_settings
     from app.core.active_repo import set_repo_root
@@ -328,8 +330,6 @@ async def run_workflow(
     compiled = compile_graph()
 
     # Pre-seed the context var if we already know the path (static case).
-    # When repo_path is empty, context_loader_node will call WorkspaceManager
-    # and then call set_repo_root itself after cloning.
     if resolved_repo_path:
         set_repo_root(resolved_repo_path)
 
@@ -337,6 +337,7 @@ async def run_workflow(
         user_request=user_request,
         repo_root=resolved_repo_path,
         repo_ref=repo_ref,
+        issue_ref=issue_ref,
         execution_platform=platform.platform(),
         phase=WorkflowPhase.PLANNING,
         active_coder="coder_a",
@@ -344,10 +345,11 @@ async def run_workflow(
     )
 
     logger.info(
-        "Starting workflow | request: %s | repo: %s | ref: %s",
+        "Starting workflow | request: %s | repo: %s | ref: %s | issue: %s",
         user_request[:100],
         initial_state.repo_root or "(dynamic)",
         repo_ref or "(none)",
+        f"#{issue_ref.issue_id}" if issue_ref else "(none)",
     )
 
     final_state_dict = await asyncio.to_thread(compiled.invoke, initial_state.model_dump())
