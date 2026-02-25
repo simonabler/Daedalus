@@ -599,6 +599,74 @@
   .intel-card.c-ok .c-value { color: var(--green); }
   .intel-card.c-info .c-value { color: var(--accent); }
 
+  /* ── Issue Card ──────────────────────── */
+  .issue-card {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid #34d399; background: #071a12;
+    animation: slide-in 0.25s ease;
+  }
+  .issue-card-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: #0a2218; border-bottom: 1px solid #1a3a28;
+  }
+  .issue-card-header .ic-icon { font-size: 16px; }
+  .issue-card-header .ic-number {
+    font-size: 12px; font-weight: 700; color: #34d399;
+    background: #0f2e1e; padding: 2px 8px; border-radius: 8px;
+  }
+  .issue-card-header .ic-title {
+    flex: 1; font-size: 12.5px; font-weight: 600; color: var(--text);
+  }
+  .issue-card-body {
+    padding: 10px 14px; font-size: 11px; color: var(--text-dim); line-height: 1.5;
+    display: flex; gap: 20px; flex-wrap: wrap;
+  }
+  .issue-card-body .ic-repo { color: var(--text-faint); }
+  .issue-card-body .ic-url a {
+    color: #34d399; text-decoration: none;
+  }
+  .issue-card-body .ic-url a:hover { text-decoration: underline; }
+
+  /* ── PR/MR Result Banner ─────────────── */
+  .pr-banner {
+    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--cyan); background: #071a20;
+    animation: slide-in 0.25s ease;
+  }
+  .pr-banner-inner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+  }
+  .pr-banner-icon { font-size: 20px; }
+  .pr-banner-text { flex: 1; }
+  .pr-banner-label {
+    font-size: 11px; font-weight: 700; color: var(--cyan);
+    text-transform: uppercase; letter-spacing: 0.8px;
+  }
+  .pr-banner-title {
+    font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px;
+  }
+  .pr-banner-url a {
+    color: var(--cyan); text-decoration: none; font-size: 11.5px;
+    word-break: break-all;
+  }
+  .pr-banner-url a:hover { text-decoration: underline; }
+  .pr-banner-number {
+    font-size: 24px; font-weight: 700; color: var(--cyan);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Approval PR hint ────────────────── */
+  .approval-pr-hint {
+    padding: 8px 16px; border-bottom: 1px solid #2a2210;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--cyan); background: #071a20;
+  }
+  .approval-pr-hint .ph-branch {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: #0a2a30; color: #67e8f9; font-family: var(--font);
+  }
+
   /* Cycle paths */
   .cycle-path {
     padding: 5px 12px; font-size: 11px; color: var(--red);
@@ -625,6 +693,8 @@
   </div>
   <div class="header-status">
     <span class="progress-text" id="progressText">—</span>
+    <span id="repoRef" style="display:none;font-size:10px;color:var(--text-faint);padding:2px 8px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)"></span>
+    <span id="issueBadge" style="display:none;font-size:10px;font-weight:700;padding:2px 8px;background:#071a12;border:1px solid #34d399;border-radius:6px;color:#34d399"></span>
     <span class="badge badge-idle" id="badge">IDLE</span>
     <button class="intel-btn ctx-btn" id="ctxBtn" title="Context window usage" style="display:none">📊 0%</button>
     <button class="intel-btn cost-btn" id="costBtn" onclick="toggleCostModal()" title="Token budget &amp; cost breakdown">💰 $0.0000</button>
@@ -1048,6 +1118,13 @@ function showApprovalPanel(meta) {
       </details>
     </div>` : '';
 
+  // PR hint
+  const prHint = meta.will_create_pr ? `
+    <div class="approval-pr-hint">
+      🔗 A PR/MR will be opened automatically after push
+      ${meta.branch ? `<span class="ph-branch">${esc(meta.branch)}</span>` : ''}
+    </div>` : '';
+
   panel.innerHTML = `
     <div class="approval-header">
       <span class="approval-icon">⚠️</span>
@@ -1060,8 +1137,9 @@ function showApprovalPanel(meta) {
       <div class="file-list">${fileListHTML || '<div class="file-entry" style="color:var(--text-faint)">No staged files detected</div>'}</div>
     </div>
     ${diffSection}
+    ${prHint}
     <div class="approval-actions">
-      <button class="btn-approve" id="btnApprove">✅ APPROVE</button>
+      <button class="btn-approve" id="btnApprove">✅ APPROVE &amp; PUSH${meta.will_create_pr ? ' + OPEN PR' : ''}</button>
       <button class="btn-reject"  id="btnReject">❌ REJECT</button>
     </div>`;
 
@@ -1340,6 +1418,12 @@ function handleEvent(evt) {
 
   switch (category) {
     case 'status':
+      // Special: issue loaded → show issue card
+      if (title === 'issue_loaded' && metadata) {
+        showIssueCard(metadata);
+        updateHeader({ phase: metadata.phase || 'planning' });
+        break;
+      }
       // Always show as prominent status line
       let cls = '';
       if (metadata?.phase === 'complete') cls = 'status-complete';
@@ -1388,6 +1472,10 @@ function handleEvent(evt) {
 
     case 'commit':
       addStatus(title, 'status-commit');
+      // If this commit event carries a PR/MR result, show the PR banner
+      if (metadata && metadata.pr_url) {
+        showPrBanner(metadata);
+      }
       break;
 
     case 'error':
@@ -1457,12 +1545,12 @@ function handleEvent(evt) {
 
     case 'token_usage':
       // Update cost indicator in header
-      updateCostIndicator(data);
+      updateCostIndicator(evt);
       break;
 
     case 'context_usage':
       // Update context window indicator in header
-      updateContextIndicator(data);
+      updateContextIndicator(evt);
       break;
 
     case 'agent_think':
@@ -1496,13 +1584,79 @@ function handleEvent(evt) {
 }
 
 // ── Update header status ─────────────────
+// ── Issue Card ────────────────────────────
+function showIssueCard(meta) {
+  const number  = meta.issue_number || meta.issue_id || '?';
+  const title   = meta.issue_title  || meta.title     || '';
+  const repo    = meta.repo_ref     || '';
+  const url     = meta.issue_url    || '';
+  const platform = meta.platform    || '';
+  const icon    = platform === 'gitlab' ? '🦊' : '🐙';
+
+  const card = document.createElement('div');
+  card.className = 'issue-card';
+  card.innerHTML = `
+    <div class="issue-card-header">
+      <span class="ic-icon">${icon}</span>
+      <span class="ic-number">#${esc(String(number))}</span>
+      <span class="ic-title">${esc(title)}</span>
+    </div>
+    <div class="issue-card-body">
+      ${repo ? `<span class="ic-repo">📁 ${esc(repo)}</span>` : ''}
+      ${url  ? `<span class="ic-url"><a href="${esc(url)}" target="_blank" rel="noopener">🔗 View issue</a></span>` : ''}
+      <span style="color:var(--text-faint)">🔄 Starting analysis…</span>
+    </div>`;
+
+  chat.appendChild(card);
+  scrollBottom();
+
+  // Update header badge
+  const badge = document.getElementById('issueBadge');
+  if (badge) {
+    badge.textContent = `${icon} #${number}`;
+    badge.style.display = '';
+    badge.title = title;
+  }
+}
+
+// ── PR/MR Banner ──────────────────────────
+let _prBanner = null;
+
+function showPrBanner(meta) {
+  // Don't show duplicates
+  if (_prBanner) return;
+
+  const url      = meta.pr_url    || '';
+  const number   = meta.pr_number || meta.number || '?';
+  const platform = meta.platform  || 'github';
+  const branch   = meta.branch    || '';
+  const label    = platform === 'gitlab' ? 'MR' : 'PR';
+
+  const banner = document.createElement('div');
+  banner.className = 'pr-banner';
+  banner.innerHTML = `
+    <div class="pr-banner-inner">
+      <span class="pr-banner-icon">🔗</span>
+      <div class="pr-banner-text">
+        <div class="pr-banner-label">${label} OPENED AUTOMATICALLY</div>
+        <div class="pr-banner-title">${label} #${esc(String(number))}${branch ? ` · <span style="color:var(--text-dim);font-size:11px">${esc(branch)}</span>` : ''}</div>
+        ${url ? `<div class="pr-banner-url"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></div>` : ''}
+      </div>
+      <div class="pr-banner-number">#${esc(String(number))}</div>
+    </div>`;
+
+  chat.appendChild(banner);
+  _prBanner = banner;
+  scrollBottom();
+}
+
 function updateHeader(data) {
   const phase = data.phase || 'idle';
   badge.textContent = phase.toUpperCase();
   badge.className = 'badge ' + (
-    phase === 'idle' ? 'badge-idle' :
+    phase === 'idle'     ? 'badge-idle' :
     phase === 'complete' ? 'badge-done' :
-    phase === 'stopped' ? 'badge-error' : 'badge-active'
+    phase === 'stopped'  ? 'badge-error' : 'badge-active'
   );
   if (data.completed !== undefined) {
     progressText.textContent = `${data.completed}/${data.total || '?'} items · ${data.branch || ''}`;
@@ -1510,6 +1664,27 @@ function updateHeader(data) {
     progressText.textContent = `${data.items_done}/${data.items_total || '?'} items · ${data.branch || ''}`;
   } else if (data.progress) {
     progressText.textContent = data.progress;
+  }
+
+  // Repo ref indicator
+  const repoEl = document.getElementById('repoRef');
+  if (repoEl && data.repo_ref) {
+    repoEl.textContent = data.repo_ref;
+    repoEl.style.display = '';
+  }
+
+  // Issue badge
+  const issueBadgeEl = document.getElementById('issueBadge');
+  if (issueBadgeEl) {
+    const ir = data.issue_ref;
+    if (ir && ir.issue_id) {
+      const icon = ir.platform === 'gitlab' ? '🦊' : '🐙';
+      issueBadgeEl.textContent = `${icon} #${ir.issue_id}`;
+      issueBadgeEl.style.display = '';
+    } else if (phase === 'idle' || phase === 'complete') {
+      // Clear badge once done
+      issueBadgeEl.style.display = 'none';
+    }
   }
 
   // Sync token budget from /api/status response
@@ -1759,6 +1934,17 @@ fetch('/api/status').then(r => r.json()).then(data => {
     const items = data.pending_plan_items || [];
     showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
   }
+  // Restore PR banner if task already completed with a PR
+  if (data.pr_result && !_prBanner) {
+    showPrBanner(data.pr_result);
+  }
+  // Restore issue card if task is in progress with an issue
+  if (data.issue_ref && data.phase !== 'idle') {
+    const ir = data.issue_ref;
+    const icon = ir.platform === 'gitlab' ? '🦊' : '🐙';
+    const badgeEl = document.getElementById('issueBadge');
+    if (badgeEl) { badgeEl.textContent = `${icon} #${ir.issue_id}`; badgeEl.style.display = ''; }
+  }
 }).catch(() => {});
 
 setInterval(() => {
@@ -1768,6 +1954,10 @@ setInterval(() => {
     if (data.phase === 'waiting_for_plan_approval' && !_planApprovalPanel) {
       const items = data.pending_plan_items || [];
       showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
+    }
+    // Show PR banner if completed and not yet visible
+    if (data.pr_result && !_prBanner) {
+      showPrBanner(data.pr_result);
     }
   }).catch(() => {});
 }, 5000);
