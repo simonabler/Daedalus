@@ -89,6 +89,11 @@ def _on_workflow_event(event: WorkflowEvent) -> None:
             _send_approval_notification(event.metadata),
             loop,
         )
+    elif event.category == EventCategory.PLAN_APPROVAL:
+        asyncio.run_coroutine_threadsafe(
+            _send_plan_approval_notification(event.metadata),
+            loop,
+        )
     elif event.category == EventCategory.CODER_QUESTION:
         asyncio.run_coroutine_threadsafe(
             _send_question_notification(event.metadata),
@@ -420,6 +425,130 @@ async def handle_inline_answer(
         )
 
 
+async def _send_plan_approval_notification(meta: dict) -> None:
+    """Send a plan-ready message with inline Approve / Revise / Cancel buttons."""
+    items      = meta.get("items", [])
+    count      = meta.get("items_count", len(items))
+
+    item_lines = "\n".join(
+        f"  {i + 1}. [{item.get('task_type', 'coding')}] {item.get('description', '')}"
+        for i, item in enumerate(items[:20])
+    )
+    if len(items) > 20:
+        item_lines += f"\n  … and {len(items) - 20} more"
+
+    text = (
+        f"\U0001f4cb *PLAN READY — YOUR APPROVAL REQUIRED*\n\n"
+        f"*{count} item{'s' if count != 1 else ''}:*\n"
+        f"{item_lines}\n\n"
+        f"Tap a button below, or use /plan\\_approve, /plan\\_revise, or /plan\\_cancel."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("\u2705 Approve",        callback_data="plan_approval:approve"),
+            InlineKeyboardButton("\u274c Cancel",          callback_data="plan_approval:cancel"),
+        ],
+        [
+            InlineKeyboardButton("\u270f\ufe0f Approve with note", callback_data="plan_approval:revise"),
+        ],
+    ])
+
+    await _notify_all(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+async def handle_inline_plan_approval(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle inline keyboard buttons for plan approval."""
+    query = update.callback_query
+    await query.answer()
+
+    if not _is_allowed(query.from_user.id):
+        await query.edit_message_text("\u26d4 Not authorized.")
+        return
+
+    data   = query.data or ""
+    action = data.split(":", 1)[1] if ":" in data else ""
+
+    if action == "cancel":
+        await _call_plan_approve(approved=False, feedback="")
+        await query.edit_message_text("\u274c Task cancelled by user.")
+        return
+
+    if action == "approve":
+        result = await _call_plan_approve(approved=True, feedback="")
+        if result:
+            await query.edit_message_text(
+                "\u2705 *Plan approved — \U0001f680 coding started!*", parse_mode="Markdown"
+            )
+        else:
+            await query.edit_message_text("\u26a0\ufe0f Could not submit approval — workflow may have moved on.")
+        return
+
+    if action == "revise":
+        # Ask user to send their revision note as a reply
+        await query.edit_message_text(
+            "\u270f\ufe0f *Send your revision note*\n\n"
+            "Reply with /plan\\_revise <your note> to submit a revision request.",
+            parse_mode="Markdown",
+        )
+
+
+async def _call_plan_approve(approved: bool, feedback: str) -> bool:
+    """POST to /api/plan-approve on the local server."""
+    import aiohttp
+    settings = get_settings()
+    host = getattr(settings, "web_host", "127.0.0.1")
+    port = getattr(settings, "web_port", 8420)
+    url  = f"http://{host}:{port}/api/plan-approve"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"approved": approved, "feedback": feedback},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                return resp.status == 200
+    except Exception as exc:
+        logger.warning("_call_plan_approve failed: %s", exc)
+        return False
+
+
+async def cmd_plan_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /plan_approve — approve the plan as-is."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+    ok = await _call_plan_approve(approved=True, feedback="")
+    msg = "\u2705 Plan approved — coding started!" if ok else "\u26a0\ufe0f No plan awaiting approval."
+    await update.message.reply_text(msg)
+
+
+async def cmd_plan_revise(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /plan_revise <note> — approve with a revision note."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+    note = " ".join(context.args or []).strip()
+    if not note:
+        await update.message.reply_text("Usage: /plan\\_revise <your revision note>", parse_mode="Markdown")
+        return
+    ok = await _call_plan_approve(approved=True, feedback=note)
+    msg = f"\u270f\ufe0f Revision sent — planner will update the plan." if ok else "\u26a0\ufe0f No plan awaiting approval."
+    await update.message.reply_text(msg)
+
+
+async def cmd_plan_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /plan_cancel — cancel the task."""
+    if not _is_allowed(update.effective_user.id):
+        await update.message.reply_text("\u26d4 Not authorized.")
+        return
+    ok = await _call_plan_approve(approved=False, feedback="")
+    msg = "\u274c Task cancelled." if ok else "\u26a0\ufe0f No plan awaiting approval."
+    await update.message.reply_text(msg)
+
+
 async def handle_inline_approval(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -478,15 +607,19 @@ def create_telegram_app() -> Optional[Application]:
 
     app = Application.builder().token(settings.telegram_bot_token).build()
 
-    app.add_handler(CommandHandler("task",    cmd_task))
-    app.add_handler(CommandHandler("status",  cmd_status))
-    app.add_handler(CommandHandler("logs",    cmd_logs))
-    app.add_handler(CommandHandler("approve", cmd_approve))
-    app.add_handler(CommandHandler("reject",  cmd_reject))
-    app.add_handler(CommandHandler("answer",  cmd_answer))
-    app.add_handler(CommandHandler("stop",    cmd_stop))
-    app.add_handler(CallbackQueryHandler(handle_inline_approval, pattern=r"^approval:"))
-    app.add_handler(CallbackQueryHandler(handle_inline_answer,   pattern=r"^answer:"))
+    app.add_handler(CommandHandler("task",         cmd_task))
+    app.add_handler(CommandHandler("status",       cmd_status))
+    app.add_handler(CommandHandler("logs",         cmd_logs))
+    app.add_handler(CommandHandler("approve",      cmd_approve))
+    app.add_handler(CommandHandler("reject",       cmd_reject))
+    app.add_handler(CommandHandler("answer",       cmd_answer))
+    app.add_handler(CommandHandler("stop",         cmd_stop))
+    app.add_handler(CommandHandler("plan_approve", cmd_plan_approve))
+    app.add_handler(CommandHandler("plan_revise",  cmd_plan_revise))
+    app.add_handler(CommandHandler("plan_cancel",  cmd_plan_cancel))
+    app.add_handler(CallbackQueryHandler(handle_inline_approval,      pattern=r"^approval:"))
+    app.add_handler(CallbackQueryHandler(handle_inline_plan_approval, pattern=r"^plan_approval:"))
+    app.add_handler(CallbackQueryHandler(handle_inline_answer,        pattern=r"^answer:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Subscribe to the shared event bus for push notifications
@@ -494,7 +627,8 @@ def create_telegram_app() -> Optional[Application]:
 
     _telegram_app = app
     logger.info(
-        "Telegram bot configured — commands: /task /status /logs /approve /reject /answer /stop"
+        "Telegram bot configured — commands: /task /status /logs /approve /reject "
+        "/answer /plan_approve /plan_revise /plan_cancel /stop"
     )
     return app
 

@@ -51,6 +51,7 @@ class WorkflowPhase(StrEnum):
     DECIDING = "deciding"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     WAITING_FOR_ANSWER = "waiting_for_answer"
+    WAITING_FOR_PLAN_APPROVAL = "waiting_for_plan_approval"
     COMMITTING = "committing"
     DOCUMENTING = "documenting"
     ENV_FIXING = "env_fixing"   # planner is creating an env-setup fix item
@@ -88,6 +89,14 @@ class GraphState(BaseModel):
     coder_question_options: list[str] = Field(default_factory=list)  # suggested choices
     coder_question_asked_by: str = ""  # "coder_a" | "coder_b"
     coder_question_answer: str = ""    # human's answer (filled by UI/Telegram)
+
+    # ── Plan Approval Gate (between planner and coder) ────────────────
+    # The workflow halts at plan_approval_gate_node after planning until
+    # the human reviews the plan and sends GO (or GO + revision note).
+    needs_plan_approval: bool = False
+    plan_approved: bool = False
+    plan_approval_feedback: str = ""   # optional revision note (empty = pure GO)
+    plan_revision_count: int = 0       # guards against infinite revision loops (max 1)
     state_checkpoint_id: str | None = None
     last_checkpoint_path: str | None = None
     resumed_from_checkpoint: bool = False

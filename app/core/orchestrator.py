@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from app.core.logging import get_logger
 from app.core.nodes import (
     answer_gate_node,
+    plan_approval_gate_node,
     code_intelligence_node,
     coder_node,
     committer_node,
@@ -56,7 +57,19 @@ def _route_after_plan(state: GraphState) -> str:
         return "stopped"
     if not state.todo_items:
         return "stopped"
+    if state.needs_plan_approval:
+        return "plan_approval_gate"
     return "coder"
+
+
+def _route_after_plan_approval_gate(state: GraphState) -> str:
+    if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
+        return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL:
+        return "stopped"    # graph halts; /api/plan-approve queues resume
+    if state.phase == WorkflowPhase.PLANNING:
+        return "planner"    # revision requested — one more planning round
+    return "coder"          # approved, proceed to coding
 
 
 def route_after_router(state: GraphState) -> str:
@@ -84,6 +97,8 @@ def _route_after_resume(state: GraphState) -> str:
         return "stopped"
     if state.phase == WorkflowPhase.WAITING_FOR_APPROVAL:
         return "stopped"
+    if state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL:
+        return "plan_approval_gate"
     if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
         return "answer_gate"
     if state.phase == WorkflowPhase.CODING:
@@ -204,6 +219,7 @@ def build_graph() -> StateGraph:
     graph.add_node("research", research_node)
     graph.add_node("resume", resume_node)
     graph.add_node("planner", planner_plan_node)
+    graph.add_node("plan_approval_gate", plan_approval_gate_node)
     graph.add_node("coder", coder_node)
     graph.add_node("answer_gate", answer_gate_node)
     graph.add_node("peer_review", peer_review_node)
@@ -230,9 +246,19 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "resume",
         _route_after_resume,
-        {"coder": "coder", "answer_gate": "answer_gate", "commit": "commit", "documenter": "documenter", "env_fix": "env_fix", "complete": END, "stopped": END},
+        {"coder": "coder", "answer_gate": "answer_gate", "plan_approval_gate": "plan_approval_gate",
+         "commit": "commit", "documenter": "documenter", "env_fix": "env_fix", "complete": END, "stopped": END},
     )
-    graph.add_conditional_edges("planner", _route_after_plan, {"coder": "coder", "stopped": END})
+    graph.add_conditional_edges(
+        "planner",
+        _route_after_plan,
+        {"plan_approval_gate": "plan_approval_gate", "coder": "coder", "stopped": END},
+    )
+    graph.add_conditional_edges(
+        "plan_approval_gate",
+        _route_after_plan_approval_gate,
+        {"planner": "planner", "coder": "coder", "stopped": END},
+    )
     graph.add_conditional_edges(
         "coder",
         _route_after_coder,

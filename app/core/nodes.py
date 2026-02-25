@@ -32,6 +32,7 @@ from app.core.events import (
     emit_node_end,
     emit_node_start,
     emit_plan,
+    emit_plan_approval_needed,
     emit_status,
     emit_token_usage,
     emit_tool_call,
@@ -1828,10 +1829,17 @@ def planner_plan_node(state: GraphState) -> dict:
         "todo_items": items if items else state.todo_items,
         "current_item_index": 0 if items else state.current_item_index,
         "branch_name": branch,
-        "phase": WorkflowPhase.CODING,
+        # Plan Approval Gate logic:
+        #   First-time plan (revision_count=0) → needs_plan_approval=True, stay in PLANNING
+        #     so _route_after_plan sends us to plan_approval_gate.
+        #   After a human revision (revision_count>=1) → skip gate, go straight to CODING.
+        "phase": WorkflowPhase.CODING if (not items or state.plan_revision_count >= 1) else WorkflowPhase.PLANNING,
         "needs_replan": False,
         "active_coder": active_coder,
         "active_reviewer": active_reviewer,
+        "needs_plan_approval": bool(items) and state.plan_revision_count < 1,
+        "plan_approved": False,
+        "plan_approval_feedback": "",
     }
     _save_checkpoint_snapshot(state, updates, "plan_complete")
 
@@ -2683,6 +2691,90 @@ def _parse_changed_files_from_status(porcelain_status: str) -> tuple[list[str], 
         if "D" in status:
             deleted.append(file_path)
     return changed, deleted
+
+
+def _format_plan_for_human(items: list) -> str:
+    """Format TODO items as a compact numbered list for human review."""
+    if not items:
+        return "(empty plan)"
+    lines = []
+    for idx, item in enumerate(items, start=1):
+        task_type = getattr(item, "task_type", "coding") or "coding"
+        desc = getattr(item, "description", "") or ""
+        agent = getattr(item, "assigned_agent", "") or ""
+        agent_label = _coder_label(agent) if agent else ""
+        suffix = f"  → {agent_label}" if agent_label else ""
+        lines.append(f"  {idx}. [{task_type}] {desc}{suffix}")
+    return "\n".join(lines)
+
+
+def plan_approval_gate_node(state: GraphState) -> dict:
+    """Pause after planning — wait for human GO before the coder starts.
+
+    Mirrors answer_gate_node. Three exit paths:
+
+    * plan_approved=True, feedback empty   → CODING (proceed as-is)
+    * plan_approved=True, feedback present → PLANNING (planner revises once,
+                                             plan_revision_count incremented)
+    * still waiting                        → WAITING_FOR_PLAN_APPROVAL (graph halts)
+
+    The web server or Telegram bot calls POST /api/plan-approve to set
+    plan_approved=True (and optionally plan_approval_feedback), then queues
+    a resume task to restart the graph.
+
+    Env-fix ops plans bypass this gate (planner_env_fix_node never sets
+    needs_plan_approval=True) so internal fix cycles are unaffected.
+    """
+    emit_node_start("planner", "Plan Approval Gate", item_desc=state.user_request[:100])
+
+    if state.plan_approved:
+        if state.plan_approval_feedback:
+            # Human wants a revision — send back to planner for one more round
+            feedback_preview = state.plan_approval_feedback[:80]
+            emit_status(
+                "planner",
+                f"🔄 Plan revision requested: {feedback_preview}",
+                **_progress_meta(state, "planning"),
+            )
+            emit_node_end("planner", "Plan Approval Gate", "Revision requested — replanning")
+            return {
+                "needs_plan_approval": False,
+                "plan_approved": False,
+                "plan_revision_count": state.plan_revision_count + 1,
+                "phase": WorkflowPhase.PLANNING,
+                "stop_reason": "",
+            }
+
+        # Pure GO — proceed to coding
+        emit_status(
+            "planner",
+            "✅ Plan approved — starting coder",
+            **_progress_meta(state, "coding"),
+        )
+        emit_node_end("planner", "Plan Approval Gate", "Approved — coding starts")
+        return {
+            "needs_plan_approval": False,
+            "plan_approved": False,
+            "plan_approval_feedback": "",
+            "phase": WorkflowPhase.CODING,
+            "stop_reason": "",
+        }
+
+    # Still waiting — emit plan for display and halt
+    plan_summary = _format_plan_for_human(state.todo_items)
+    emit_plan_approval_needed("planner", plan_summary, state.todo_items)
+    emit_status(
+        "planner",
+        f"⏳ Waiting for plan approval ({len(state.todo_items)} items) — "
+        "approve, revise, or cancel in the UI",
+        **_progress_meta(state, "waiting_for_plan_approval"),
+    )
+    emit_node_end("planner", "Plan Approval Gate", "Halted — waiting for human plan approval")
+    return {
+        "needs_plan_approval": True,
+        "phase": WorkflowPhase.WAITING_FOR_PLAN_APPROVAL,
+        "stop_reason": "waiting_for_plan_approval",
+    }
 
 
 def answer_gate_node(state: GraphState) -> dict:
