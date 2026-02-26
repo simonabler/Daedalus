@@ -1091,6 +1091,38 @@ function renderDiff(raw) {
 
 // ── Build and insert the approval panel ──────
 let _approvalPanel = null;
+let _approvalRestoreTimer = null;
+let _approvalRestoreInFlight = false;
+
+function hasApprovalPanel() {
+  if (_approvalPanel && !_approvalPanel.isConnected) _approvalPanel = null;
+  return !!_approvalPanel;
+}
+
+function scheduleRestoreApprovalPanel(reason = 'unknown') {
+  if (hasApprovalPanel() || _approvalRestoreInFlight || _approvalRestoreTimer) return;
+  _approvalRestoreTimer = setTimeout(() => {
+    _approvalRestoreTimer = null;
+    restoreApprovalPanel(reason);
+  }, 500);
+}
+
+async function restoreApprovalPanel(reason = 'unknown') {
+  if (hasApprovalPanel() || _approvalRestoreInFlight) return;
+  _approvalRestoreInFlight = true;
+  try {
+    const res = await fetch('/api/pending');
+    const data = await res.json();
+    if (data?.needs_human_approval && !hasApprovalPanel()) {
+      console.debug('Restoring commit approval panel from /api/pending', { reason });
+      showApprovalPanel(data.pending_approval || {});
+    }
+  } catch (err) {
+    console.warn('restoreApprovalPanel failed', { reason, err });
+  } finally {
+    _approvalRestoreInFlight = false;
+  }
+}
 
 function showApprovalPanel(meta) {
   currentDetailBlock = null;
@@ -1520,6 +1552,9 @@ function handleEvent(evt) {
         if (metadata.type === 'intelligence_complete') {
           _onIntelligenceComplete();
         }
+        if (metadata.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
+          scheduleRestoreApprovalPanel('status_event');
+        }
         if (metadata.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
           if (metadata.needs_plan_approval && Array.isArray(metadata.pending_plan_items)) {
             showPlanApprovalPanel(_planMetaFromStatus(metadata));
@@ -1561,6 +1596,7 @@ function handleEvent(evt) {
 
     case 'approval_needed':
       showApprovalPanel(metadata || {});
+      if (!hasApprovalPanel()) scheduleRestoreApprovalPanel('approval_needed_event');
       break;
 
     case 'plan_approval':
@@ -2012,7 +2048,7 @@ connectWS();
 // On page load, check if a task is already waiting for approval or a coder answer
 fetch('/api/status').then(r => r.json()).then(data => {
   updateHeader(data);
-  if (data.phase === 'waiting_for_approval' && !_approvalPanel) {
+  if (data.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
     fetch('/api/pending').then(r => r.json()).then(p => {
       if (p && p.needs_human_approval) showApprovalPanel(p.pending_approval || {});
     }).catch(() => {});
@@ -2042,6 +2078,9 @@ fetch('/api/status').then(r => r.json()).then(data => {
 setInterval(() => {
   fetch('/api/status').then(r => r.json()).then(data => {
     updateHeader(data);
+    if (data.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
+      scheduleRestoreApprovalPanel('status_poll');
+    }
     // Restore plan approval panel if we're waiting and it's not visible
     if (data.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
       const items = data.pending_plan_items || [];
