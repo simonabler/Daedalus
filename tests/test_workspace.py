@@ -550,7 +550,7 @@ class TestContextLoaderWorkspaceIntegration:
         (tmp_path / "README.md").write_text("hello")
 
         mock_ws = MagicMock()
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, str(tmp_path)))
 
         with patch("infra.workspace.WorkspaceManager") as MockWS:
@@ -567,7 +567,7 @@ class TestContextLoaderWorkspaceIntegration:
         from app.core import nodes
         from app.core.state import GraphState
 
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, target_repo_path=""))
 
         state = GraphState(user_request="test", repo_root="", repo_ref="")
@@ -581,7 +581,7 @@ class TestContextLoaderWorkspaceIntegration:
         from app.core import nodes
         from app.core.state import GraphState
 
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, target_repo_path=""))
 
         # Make a fake resolved path
@@ -605,7 +605,7 @@ class TestContextLoaderWorkspaceIntegration:
         from app.core.state import GraphState
         from infra.workspace import WorkspaceError
 
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, target_repo_path=""))
 
         mock_ws_instance = MagicMock()
@@ -623,7 +623,7 @@ class TestContextLoaderWorkspaceIntegration:
         from app.core import nodes
         from app.core.state import GraphState
 
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, target_repo_path=""))
 
         fake_repo = tmp_path / "github.com" / "owner" / "repo"
@@ -646,7 +646,7 @@ class TestContextLoaderWorkspaceIntegration:
         from app.core.state import GraphState
         import app.core.active_repo as ar
 
-        monkeypatch.setattr(nodes, "get_settings",
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings",
                             lambda: self._make_settings(tmp_path, target_repo_path=""))
 
         fake_repo = tmp_path / "github.com" / "owner" / "repo"

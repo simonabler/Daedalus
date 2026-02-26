@@ -42,7 +42,7 @@ def test_parse_todo_for_resume():
 def test_planner_handles_question_without_coder(monkeypatch):
     from app.core import nodes
 
-    monkeypatch.setattr(nodes, "_answer_question_directly", lambda state: "Antwort")
+    monkeypatch.setattr("app.core.nodes.planner._answer_question_directly", lambda state: "Antwort")
     state = GraphState(user_request="Was ist LangGraph?")
 
     result = nodes.planner_plan_node(state)
@@ -66,7 +66,7 @@ def test_planner_resume_uses_saved_workflow(monkeypatch):
         "active_reviewer": "reviewer_b",
     }
 
-    monkeypatch.setattr(nodes, "_resume_from_saved_todo", lambda state: resume_state)
+    monkeypatch.setattr("app.core.nodes.planner._resume_from_saved_todo", lambda state: resume_state)
     state = GraphState(user_request="resume workflow please")
 
     result = nodes.planner_plan_node(state)
@@ -87,7 +87,7 @@ def test_resume_node_prefers_checkpoint(monkeypatch):
         resumed_from_checkpoint=True,
     )
 
-    monkeypatch.setattr(nodes.checkpoint_manager, "load_checkpoint", lambda repo_root="": restored)
+    monkeypatch.setattr("app.core.nodes.resume.checkpoint_manager.load_checkpoint", lambda repo_root="": restored)
     state = GraphState(user_request="resume", repo_root="repo")
 
     result = nodes.resume_node(state)

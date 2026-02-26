@@ -111,10 +111,10 @@ def test_graphstate_plan_fields_serialise():
 
 def test_gate_halts_when_not_yet_approved():
     state = _state(needs_plan_approval=True, plan_approved=False)
-    with patch("app.core.nodes.emit_plan_approval_needed"), \
-         patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.gates.emit_plan_approval_needed"), \
+         patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         result = plan_approval_gate_node(state)
     assert result["phase"] == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL
     assert result["needs_plan_approval"] is True
@@ -123,10 +123,10 @@ def test_gate_halts_when_not_yet_approved():
 
 def test_gate_emits_plan_approval_event_when_waiting():
     state = _state(needs_plan_approval=True, plan_approved=False)
-    with patch("app.core.nodes.emit_plan_approval_needed") as mock_emit, \
-         patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.gates.emit_plan_approval_needed") as mock_emit, \
+         patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         plan_approval_gate_node(state)
     mock_emit.assert_called_once()
     args = mock_emit.call_args
@@ -135,10 +135,10 @@ def test_gate_emits_plan_approval_event_when_waiting():
 
 def test_gate_status_waiting_includes_pending_plan_items_metadata():
     state = _state(needs_plan_approval=True, plan_approved=False, todo_items=[_make_item("add endpoint", task_type="coding", agent="coder_a")])
-    with patch("app.core.nodes.emit_plan_approval_needed"), \
-         patch("app.core.nodes.emit_status") as mock_status, \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.gates.emit_plan_approval_needed"), \
+         patch("app.core.nodes.gates.emit_status") as mock_status, \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         plan_approval_gate_node(state)
 
     mock_status.assert_called_once()
@@ -157,9 +157,9 @@ def test_gate_status_waiting_includes_pending_plan_items_metadata():
 
 def test_gate_routes_to_coding_on_pure_approve():
     state = _state(plan_approved=True, plan_approval_feedback="")
-    with patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         result = plan_approval_gate_node(state)
     assert result["phase"] == WorkflowPhase.CODING
     assert result["needs_plan_approval"] is False
@@ -174,9 +174,9 @@ def test_gate_routes_to_coding_on_pure_approve():
 
 def test_gate_routes_to_planning_on_approve_with_feedback():
     state = _state(plan_approved=True, plan_approval_feedback="add error handling", plan_revision_count=0)
-    with patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         result = plan_approval_gate_node(state)
     assert result["phase"] == WorkflowPhase.PLANNING
     assert result["needs_plan_approval"] is False
@@ -187,9 +187,9 @@ def test_gate_routes_to_planning_on_approve_with_feedback():
 
 def test_gate_increments_revision_count():
     state = _state(plan_approved=True, plan_approval_feedback="revise it", plan_revision_count=0)
-    with patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         result = plan_approval_gate_node(state)
     assert result["plan_revision_count"] == 1
 
@@ -218,21 +218,21 @@ def test_planner_skips_gate_after_one_revision():
 
     mock_items = [_make_item("implement endpoint")]
 
-    with patch("app.core.nodes._invoke_agent", return_value='{"plan": [{"description": "implement endpoint", "task_type": "coding", "acceptance_criteria": ["works"], "verification_commands": ["pytest"]}]}'), \
-         patch("app.core.nodes._parse_plan_from_result", return_value=mock_items), \
-         patch("app.core.nodes.ensure_memory_files"), \
-         patch("app.core.nodes.get_memory_stats", return_value={}), \
-         patch("app.core.nodes.load_all_memory", return_value=""), \
-         patch("app.core.nodes.read_file"), \
-         patch("app.core.nodes.git_create_branch"), \
-         patch("app.core.nodes._save_checkpoint_snapshot"), \
-         patch("app.core.nodes.emit_plan"), \
-         patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"), \
-         patch("app.core.nodes.history_summary", return_value=""), \
-         patch("app.core.nodes.select_agent_thompson", return_value=("coder_a", {})), \
-         patch("app.core.nodes._write_todo_file"):
+    with patch("app.core.nodes._helpers._invoke_agent", return_value='{"plan": [{"description": "implement endpoint", "task_type": "coding", "acceptance_criteria": ["works"], "verification_commands": ["pytest"]}]}'), \
+         patch("app.core.nodes.planner._parse_plan_from_result", return_value=mock_items), \
+         patch("app.core.nodes.planner.ensure_memory_files"), \
+         patch("app.core.nodes.planner.get_memory_stats", return_value={}), \
+         patch("app.core.nodes.planner.load_all_memory", return_value=""), \
+         patch("app.core.nodes.planner.read_file"), \
+         patch("app.core.nodes.planner.git_create_branch"), \
+         patch("app.core.nodes._helpers._save_checkpoint_snapshot"), \
+         patch("app.core.nodes.planner.emit_plan"), \
+         patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.gates.emit_node_end"), \
+         patch("app.core.nodes.planner.history_summary", return_value=""), \
+         patch("app.core.nodes.planner.select_agent_thompson", return_value=("coder_a", {})), \
+         patch("app.core.nodes._helpers._write_todo_file"):
         result = planner_plan_node(base_state)
 
     # With plan_revision_count=1, needs_plan_approval must be False
@@ -255,10 +255,10 @@ def test_env_fix_node_does_not_set_needs_plan_approval():
         repo_facts={"tech_stack": {"language": "python", "package_manager": "pip"}},
     )
 
-    with patch("app.core.nodes._invoke_agent", return_value='{"description": "Install httpx", "command": "pip install httpx", "reason": "missing"}'), \
-         patch("app.core.nodes.emit_status"), \
-         patch("app.core.nodes.emit_node_start"), \
-         patch("app.core.nodes.emit_node_end"):
+    with patch("app.core.nodes._helpers._invoke_agent", return_value='{"description": "Install httpx", "command": "pip install httpx", "reason": "missing"}'), \
+         patch("app.core.nodes.resume.emit_status"), \
+         patch("app.core.nodes.resume.emit_node_start"), \
+         patch("app.core.nodes.resume.emit_node_end"):
         result = planner_env_fix_node(state)
 
     assert "needs_plan_approval" not in result or result.get("needs_plan_approval") is False
@@ -636,10 +636,10 @@ class TestResumeNodePlanApprovalPath:
         restored = self._mock_restored_state("coding", plan_approved=True, feedback="")
         entry_state = GraphState(user_request="resume", repo_root="/tmp")
 
-        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
-             patch("app.core.nodes.emit_node_start"), \
-             patch("app.core.nodes.emit_status"), \
-             patch("app.core.nodes.emit_node_end"):
+        with patch("app.core.nodes.resume.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.resume.emit_node_start"), \
+             patch("app.core.nodes.resume.emit_status"), \
+             patch("app.core.nodes.resume.emit_node_end"):
             mock_cm.load_checkpoint.return_value = restored
             result = resume_node(entry_state)
 
@@ -655,10 +655,10 @@ class TestResumeNodePlanApprovalPath:
         restored = self._mock_restored_state("planning", plan_approved=True, feedback="add retry")
         entry_state = GraphState(user_request="resume", repo_root="/tmp")
 
-        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
-             patch("app.core.nodes.emit_node_start"), \
-             patch("app.core.nodes.emit_status"), \
-             patch("app.core.nodes.emit_node_end"):
+        with patch("app.core.nodes.resume.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.resume.emit_node_start"), \
+             patch("app.core.nodes.resume.emit_status"), \
+             patch("app.core.nodes.resume.emit_node_end"):
             mock_cm.load_checkpoint.return_value = restored
             result = resume_node(entry_state)
 
@@ -673,10 +673,10 @@ class TestResumeNodePlanApprovalPath:
         restored = self._mock_restored_state("coding", plan_approved=True)
         entry_state = GraphState(user_request="resume", repo_root="/tmp")
 
-        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
-             patch("app.core.nodes.emit_node_start"), \
-             patch("app.core.nodes.emit_status"), \
-             patch("app.core.nodes.emit_node_end"):
+        with patch("app.core.nodes.resume.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.resume.emit_node_start"), \
+             patch("app.core.nodes.resume.emit_status"), \
+             patch("app.core.nodes.resume.emit_node_end"):
             mock_cm.load_checkpoint.return_value = restored
             result = resume_node(entry_state)
 

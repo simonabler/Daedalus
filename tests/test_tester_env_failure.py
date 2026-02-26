@@ -180,8 +180,8 @@ class TestTesterNodeEnvFailure:
             active_coder="coder_a",
         )
 
-        with patch("app.core.nodes._invoke_agent", return_value=llm_result), \
-             patch("app.core.nodes._format_intelligence_summary_tester", return_value=""):
+        with patch("app.core.nodes._helpers._invoke_agent", return_value=llm_result), \
+             patch("app.core.nodes._context_format._format_intelligence_summary_tester", return_value=""):
             result = tester_node(state)
         clear_listeners()
         return result
@@ -255,7 +255,7 @@ class TestPlannerEnvFixNode:
         )
 
         llm_json = '{"description": "Install missing package X", "command": "pip install X", "reason": "ModuleNotFoundError"}'
-        with patch("app.core.nodes._invoke_agent", return_value=llm_json):
+        with patch("app.core.nodes._helpers._invoke_agent", return_value=llm_json):
             result = planner_env_fix_node(state)
         clear_listeners()
         return result

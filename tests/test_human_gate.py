@@ -18,7 +18,7 @@ def test_human_gate_requires_approval(monkeypatch):
             return "diff --git a/app/core/nodes.py b/app/core/nodes.py\n+change\n"
         return ""
 
-    monkeypatch.setattr(nodes, "git_command", SimpleNamespace(invoke=fake_git_invoke))
+    monkeypatch.setattr("app.core.nodes.gates.git_command", SimpleNamespace(invoke=fake_git_invoke))
 
     state = GraphState(user_request="commit changes")
     result = nodes.human_gate_node(state)

@@ -17,8 +17,7 @@ def test_context_loader_reads_docs_and_marks_loaded(tmp_path, monkeypatch):
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        nodes,
-        "get_settings",
+        "app.core.nodes.context_loader.get_settings",
         lambda: SimpleNamespace(target_repo_path=str(tmp_path), max_output_chars=10000),
     )
 
@@ -39,8 +38,7 @@ def test_context_loader_skips_when_already_loaded(tmp_path, monkeypatch):
     from app.core import nodes
 
     monkeypatch.setattr(
-        nodes,
-        "get_settings",
+        "app.core.nodes.context_loader.get_settings",
         lambda: SimpleNamespace(target_repo_path=str(tmp_path), max_output_chars=10000),
     )
 
@@ -64,18 +62,17 @@ def test_context_loader_skips_agent_md_when_target_is_daedalus_root(monkeypatch)
     from app.core import nodes
 
     # Simulate: target repo IS the Daedalus root
-    daedalus_root = Path(nodes.__file__).parent.parent.parent.resolve()
+    daedalus_root = Path(__file__).parent.parent.resolve()
 
     monkeypatch.setattr(
-        nodes,
-        "get_settings",
+        "app.core.nodes.context_loader.get_settings",
         lambda: SimpleNamespace(
             target_repo_path=str(daedalus_root),
             max_output_chars=10000,
         ),
     )
 
-    state = nodes.GraphState(user_request="Fix a bug", repo_root=str(daedalus_root))
+    state = GraphState(user_request="Fix a bug", repo_root=str(daedalus_root))
     result = nodes.context_loader_node(state)
 
     # AGENT.md should NOT appear in agent_instructions
@@ -102,12 +99,11 @@ def test_context_loader_reads_agent_md_from_external_repo(tmp_path, monkeypatch)
     (tmp_path / "README.md").write_text("# My Project", encoding="utf-8")
 
     monkeypatch.setattr(
-        nodes,
-        "get_settings",
+        "app.core.nodes.context_loader.get_settings",
         lambda: SimpleNamespace(target_repo_path=str(tmp_path), max_output_chars=10000),
     )
 
-    state = nodes.GraphState(user_request="Add feature", repo_root=str(tmp_path))
+    state = GraphState(user_request="Add feature", repo_root=str(tmp_path))
     result = nodes.context_loader_node(state)
 
     instructions = result.get("agent_instructions", "")
