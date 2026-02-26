@@ -133,6 +133,24 @@ def test_gate_emits_plan_approval_event_when_waiting():
     assert args[0][2] == state.todo_items   # items argument
 
 
+def test_gate_status_waiting_includes_pending_plan_items_metadata():
+    state = _state(needs_plan_approval=True, plan_approved=False, todo_items=[_make_item("add endpoint", task_type="coding", agent="coder_a")])
+    with patch("app.core.nodes.emit_plan_approval_needed"), \
+         patch("app.core.nodes.emit_status") as mock_status, \
+         patch("app.core.nodes.emit_node_start"), \
+         patch("app.core.nodes.emit_node_end"):
+        plan_approval_gate_node(state)
+
+    mock_status.assert_called_once()
+    kwargs = mock_status.call_args.kwargs
+    assert kwargs["phase"] == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL
+    assert kwargs["needs_plan_approval"] is True
+    assert isinstance(kwargs["pending_plan_items"], list)
+    assert kwargs["pending_plan_items"][0]["description"] == "add endpoint"
+    assert kwargs["pending_plan_items"][0]["task_type"] == "coding"
+    assert kwargs["pending_plan_items"][0]["assigned_agent"] == "coder_a"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. plan_approval_gate_node — approved without feedback → CODING
 # ═══════════════════════════════════════════════════════════════════════════
@@ -462,6 +480,7 @@ def test_status_includes_needs_plan_approval_true():
         assert data["needs_plan_approval"] is True
         assert len(data["pending_plan_items"]) == 1
         assert data["pending_plan_items"][0]["description"] == "add endpoint"
+        assert "assigned_agent" in data["pending_plan_items"][0]
     finally:
         srv._current_state = original
 
@@ -484,3 +503,213 @@ def test_status_pending_plan_items_empty_when_not_waiting():
         assert data["pending_plan_items"] == []
     finally:
         srv._current_state = original
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. CheckpointManager.mark_latest_plan_approval
+#     Verifies that approve_plan persists the decision to disk so that
+#     resume_node can read it back without a round-trip through the gate.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestMarkLatestPlanApproval:
+    """CheckpointManager.mark_latest_plan_approval writes approval to disk."""
+
+    def _manager_with_checkpoint(self, tmp_path, extra_state: dict | None = None):
+        """Return a CheckpointManager with a pre-existing checkpoint at tmp_path."""
+        from app.core.checkpoints import CheckpointManager
+
+        state_payload = {
+            "user_request": "add endpoint",
+            "phase": "waiting_for_plan_approval",
+            "plan_approved": False,
+            "needs_plan_approval": True,
+            "plan_approval_feedback": "",
+            "plan_revision_count": 0,
+            "todo_items": [],
+        }
+        if extra_state:
+            state_payload.update(extra_state)
+
+        checkpoint_dir = tmp_path / ".daedalus" / "checkpoints"
+        checkpoint_dir.mkdir(parents=True)
+        payload = {"checkpoint_id": "plan_complete_abc123", "state": state_payload}
+        latest = checkpoint_dir / "latest.json"
+        specific = checkpoint_dir / "plan_complete_abc123.json"
+        import json
+        latest.write_text(json.dumps(payload))
+        specific.write_text(json.dumps(payload))
+
+        mgr = CheckpointManager()
+        mgr._base_dir = tmp_path  # point manager at tmp dir
+        return mgr, tmp_path
+
+    def test_approve_sets_plan_approved_true(self, tmp_path):
+        from app.core.checkpoints import CheckpointManager
+        import json
+
+        mgr, root = self._manager_with_checkpoint(tmp_path)
+        result = mgr.mark_latest_plan_approval(approved=True, repo_root=str(root))
+
+        assert result is True
+        latest = root / ".daedalus" / "checkpoints" / "latest.json"
+        state = json.loads(latest.read_text())["state"]
+        assert state["plan_approved"] is True
+        assert state["needs_plan_approval"] is False
+
+    def test_approve_without_feedback_sets_phase_coding(self, tmp_path):
+        from app.core.checkpoints import CheckpointManager
+        import json
+
+        mgr, root = self._manager_with_checkpoint(tmp_path)
+        mgr.mark_latest_plan_approval(approved=True, feedback="", repo_root=str(root))
+
+        state = json.loads((root / ".daedalus" / "checkpoints" / "latest.json").read_text())["state"]
+        assert state["phase"] == "coding"
+        assert state["stop_reason"] == ""
+
+    def test_approve_with_feedback_sets_phase_planning(self, tmp_path):
+        from app.core.checkpoints import CheckpointManager
+        import json
+
+        mgr, root = self._manager_with_checkpoint(tmp_path)
+        mgr.mark_latest_plan_approval(approved=True, feedback="add retry logic", repo_root=str(root))
+
+        state = json.loads((root / ".daedalus" / "checkpoints" / "latest.json").read_text())["state"]
+        assert state["phase"] == "planning"
+        assert state["plan_approval_feedback"] == "add retry logic"
+        assert state["plan_revision_count"] == 1
+
+    def test_approve_also_writes_specific_checkpoint(self, tmp_path):
+        from app.core.checkpoints import CheckpointManager
+        import json
+
+        mgr, root = self._manager_with_checkpoint(tmp_path)
+        mgr.mark_latest_plan_approval(approved=True, repo_root=str(root))
+
+        specific = root / ".daedalus" / "checkpoints" / "plan_complete_abc123.json"
+        state = json.loads(specific.read_text())["state"]
+        assert state["plan_approved"] is True
+
+    def test_returns_false_when_no_checkpoint_exists(self, tmp_path):
+        from app.core.checkpoints import CheckpointManager
+
+        mgr = CheckpointManager()
+        mgr._base_dir = tmp_path
+        result = mgr.mark_latest_plan_approval(approved=True, repo_root=str(tmp_path))
+        assert result is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 14. resume_node — plan approval fast-path
+#     After approve_plan calls mark_latest_plan_approval the checkpoint has
+#     plan_approved=True.  resume_node must route to CODING (or PLANNING for
+#     revision) WITHOUT re-entering plan_approval_gate.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestResumeNodePlanApprovalPath:
+    """resume_node handles plan_approved=True from checkpoint correctly."""
+
+    def _mock_restored_state(self, phase: str, plan_approved: bool, feedback: str = ""):
+        from app.core.state import GraphState, WorkflowPhase, TodoItem, ItemStatus
+        return GraphState(
+            user_request="add endpoint",
+            phase=WorkflowPhase(phase),
+            plan_approved=plan_approved,
+            needs_plan_approval=not plan_approved,
+            plan_approval_feedback=feedback,
+            todo_items=[
+                TodoItem(
+                    id="item-001",
+                    description="implement endpoint",
+                    task_type="coding",
+                    acceptance_criteria=["works"],
+                    verification_commands=["pytest"],
+                    status=ItemStatus.PENDING,
+                )
+            ],
+        )
+
+    def test_resume_routes_to_coding_when_plan_approved_without_feedback(self):
+        from app.core.nodes import resume_node
+        from app.core.state import GraphState, WorkflowPhase
+
+        restored = self._mock_restored_state("coding", plan_approved=True, feedback="")
+        entry_state = GraphState(user_request="resume", repo_root="/tmp")
+
+        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.emit_node_start"), \
+             patch("app.core.nodes.emit_status"), \
+             patch("app.core.nodes.emit_node_end"):
+            mock_cm.load_checkpoint.return_value = restored
+            result = resume_node(entry_state)
+
+        assert result["phase"] == WorkflowPhase.CODING
+        assert result["stop_reason"] == ""
+        # Must NOT still be waiting for plan approval
+        assert result.get("needs_plan_approval") is False
+
+    def test_resume_routes_to_planning_when_plan_approved_with_feedback(self):
+        from app.core.nodes import resume_node
+        from app.core.state import GraphState, WorkflowPhase
+
+        restored = self._mock_restored_state("planning", plan_approved=True, feedback="add retry")
+        entry_state = GraphState(user_request="resume", repo_root="/tmp")
+
+        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.emit_node_start"), \
+             patch("app.core.nodes.emit_status"), \
+             patch("app.core.nodes.emit_node_end"):
+            mock_cm.load_checkpoint.return_value = restored
+            result = resume_node(entry_state)
+
+        assert result["phase"] == WorkflowPhase.PLANNING
+        assert result["stop_reason"] == ""
+
+    def test_resume_does_not_enter_gate_when_plan_approved(self):
+        """resume_node must not return phase=WAITING_FOR_PLAN_APPROVAL when approved."""
+        from app.core.nodes import resume_node
+        from app.core.state import GraphState, WorkflowPhase
+
+        restored = self._mock_restored_state("coding", plan_approved=True)
+        entry_state = GraphState(user_request="resume", repo_root="/tmp")
+
+        with patch("app.core.nodes.checkpoint_manager") as mock_cm, \
+             patch("app.core.nodes.emit_node_start"), \
+             patch("app.core.nodes.emit_status"), \
+             patch("app.core.nodes.emit_node_end"):
+            mock_cm.load_checkpoint.return_value = restored
+            result = resume_node(entry_state)
+
+        assert result["phase"] != WorkflowPhase.WAITING_FOR_PLAN_APPROVAL
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 15. /api/plan-approve calls mark_latest_plan_approval
+#     Ensures the server writes the approval to disk, not just to memory.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_plan_approve_calls_mark_latest_plan_approval(client_with_pending_plan):
+    """POST /api/plan-approve must persist the approval via mark_latest_plan_approval."""
+    client, state = client_with_pending_plan
+
+    with patch("app.web.server.checkpoint_manager") as mock_cm:
+        mock_cm.mark_latest_plan_approval = MagicMock(return_value=True)
+        resp = client.post("/api/plan-approve", json={"approved": True, "feedback": ""})
+
+    assert resp.status_code == 200
+    mock_cm.mark_latest_plan_approval.assert_called_once_with(
+        approved=True, feedback="", repo_root=str(state.repo_root or "")
+    )
+
+
+def test_plan_approve_with_feedback_calls_mark_latest_plan_approval(client_with_pending_plan):
+    client, state = client_with_pending_plan
+
+    with patch("app.web.server.checkpoint_manager") as mock_cm:
+        mock_cm.mark_latest_plan_approval = MagicMock(return_value=True)
+        resp = client.post("/api/plan-approve", json={"approved": True, "feedback": "add error handling"})
+
+    assert resp.status_code == 200
+    mock_cm.mark_latest_plan_approval.assert_called_once_with(
+        approved=True, feedback="add error handling", repo_root=str(state.repo_root or "")
+    )

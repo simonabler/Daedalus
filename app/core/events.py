@@ -25,6 +25,7 @@ Event categories:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ logger = get_logger("core.events")
 
 # ── Event loop reference for cross-thread delivery ───────────────────────
 _loop: asyncio.AbstractEventLoop | None = None
+_seq_counter = itertools.count(1)
 
 
 def set_event_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -77,6 +79,7 @@ class WorkflowEvent:
     title: str                      # short human-readable headline
     detail: str = ""                # longer content (agent output, tool result, etc.)
     metadata: dict = field(default_factory=dict)  # structured data (verdict, item_id, etc.)
+    seq: int = field(default_factory=lambda: next(_seq_counter))
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -86,6 +89,7 @@ class WorkflowEvent:
             "title": self.title,
             "detail": self.detail,
             "metadata": self.metadata,
+            "seq": self.seq,
             "ts": self.timestamp,
         }
 

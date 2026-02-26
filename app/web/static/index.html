@@ -266,7 +266,9 @@
     border: 1px solid var(--yellow); background: #1e1a08;
     animation: slide-in 0.25s ease;
   }
-  @keyframes slide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  /* Avoid opacity-based entry animation on interactive panels.
+     E2E runners often pause/disable animations, which can freeze elements at opacity:0. */
+  @keyframes slide-in { from { transform: translateY(6px); } to { transform: none; } }
 
   .approval-header {
     display: flex; align-items: center; gap: 10px;
@@ -438,7 +440,7 @@
 
   /* ── Plan Approval Panel ─────────────── */
   .plan-approval-panel {
-    margin: 8px 0; border-radius: 8px; overflow: hidden;
+    margin: 8px 0; border-radius: 8px; overflow: visible;
     border: 1px solid #60a5fa; background: #0a1628;
     animation: slide-in 0.25s ease;
   }
@@ -683,6 +685,17 @@
   .coupling-bar-bg { flex: 1; height: 4px; background: var(--surface3); border-radius: 2px; }
   .coupling-bar { height: 4px; border-radius: 2px; background: var(--accent); }
   .coupling-score { font-size: 10px; color: var(--text-dim); width: 32px; text-align: right; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .approval-panel,
+    .question-panel,
+    .plan-approval-panel,
+    .issue-card,
+    .pr-banner,
+    .intel-panel {
+      animation: none !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -1078,6 +1091,38 @@ function renderDiff(raw) {
 
 // ── Build and insert the approval panel ──────
 let _approvalPanel = null;
+let _approvalRestoreTimer = null;
+let _approvalRestoreInFlight = false;
+
+function hasApprovalPanel() {
+  if (_approvalPanel && !_approvalPanel.isConnected) _approvalPanel = null;
+  return !!_approvalPanel;
+}
+
+function scheduleRestoreApprovalPanel(reason = 'unknown') {
+  if (hasApprovalPanel() || _approvalRestoreInFlight || _approvalRestoreTimer) return;
+  _approvalRestoreTimer = setTimeout(() => {
+    _approvalRestoreTimer = null;
+    restoreApprovalPanel(reason);
+  }, 500);
+}
+
+async function restoreApprovalPanel(reason = 'unknown') {
+  if (hasApprovalPanel() || _approvalRestoreInFlight) return;
+  _approvalRestoreInFlight = true;
+  try {
+    const res = await fetch('/api/pending');
+    const data = await res.json();
+    if (data?.needs_human_approval && !hasApprovalPanel()) {
+      console.debug('Restoring commit approval panel from /api/pending', { reason });
+      showApprovalPanel(data.pending_approval || {});
+    }
+  } catch (err) {
+    console.warn('restoreApprovalPanel failed', { reason, err });
+  } finally {
+    _approvalRestoreInFlight = false;
+  }
+}
 
 function showApprovalPanel(meta) {
   currentDetailBlock = null;
@@ -1195,25 +1240,68 @@ async function submitApproval(approved, panel) {
 
 // ── Plan Approval Panel ───────────────────────
 let _planApprovalPanel = null;
+let _planApprovalRestoreTimer = null;
+let _planApprovalRestoreInFlight = false;
+
+function hasPlanApprovalPanel() {
+  if (_planApprovalPanel && !_planApprovalPanel.isConnected) _planApprovalPanel = null;
+  return !!_planApprovalPanel;
+}
+
+function _planMetaFromStatus(data) {
+  const items = Array.isArray(data?.pending_plan_items) ? data.pending_plan_items : [];
+  return {
+    items,
+    items_count: items.length,
+    plan_summary: data?.plan_summary || '',
+  };
+}
+
+function scheduleRestorePlanApprovalPanel(reason = 'unknown') {
+  if (hasPlanApprovalPanel() || _planApprovalRestoreInFlight || _planApprovalRestoreTimer) return;
+  _planApprovalRestoreTimer = setTimeout(() => {
+    _planApprovalRestoreTimer = null;
+    restorePlanApprovalPanel(reason);
+  }, 500);
+}
+
+async function restorePlanApprovalPanel(reason = 'unknown') {
+  if (hasPlanApprovalPanel() || _planApprovalRestoreInFlight) return;
+  _planApprovalRestoreInFlight = true;
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    if (data?.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
+      console.debug('Restoring plan approval panel from /api/status', { reason, items: (data.pending_plan_items || []).length });
+      showPlanApprovalPanel(_planMetaFromStatus(data));
+    }
+  } catch (err) {
+    console.warn('restorePlanApprovalPanel failed', { reason, err });
+  } finally {
+    _planApprovalRestoreInFlight = false;
+  }
+}
 
 function showPlanApprovalPanel(meta) {
-  if (_planApprovalPanel) _planApprovalPanel.remove();
+  let panel = null;
+  try {
+    if (_planApprovalPanel) _planApprovalPanel.remove();
 
-  const items    = meta.items || [];
-  const count    = meta.items_count || items.length;
+    const items    = meta.items || [];
+    const count    = meta.items_count || items.length;
 
   const itemsHTML = items.map((item, idx) => {
-    const typeClass = 'type-' + (item.task_type || 'coding').toLowerCase().replace(/[^a-z]/g, '');
+    const typeClass = 'type-' + String(item.task_type || 'coding').toLowerCase().replace(/[^a-z]/g, '');
     const agent     = item.assigned_agent ? `→ ${esc(item.assigned_agent)}` : '';
     return `<div class="plan-item-row">
       <span class="plan-item-num">${idx + 1}.</span>
-      <span class="plan-item-type ${typeClass}">${esc(item.task_type || 'coding')}</span>
-      <span class="plan-item-desc">${esc(item.description || '')}</span>
+      <span class="plan-item-type ${typeClass}">${esc(String(item.task_type || 'coding'))}</span>
+      <span class="plan-item-desc">${esc(String(item.description || ''))}</span>
       <span class="plan-item-agent">${agent}</span>
     </div>`;
   }).join('');
 
-  const panel = document.createElement('div');
+  panel = document.createElement('div');
   panel.className = 'plan-approval-panel';
   panel.innerHTML = `
     <div class="plan-approval-header">
@@ -1258,6 +1346,11 @@ function showPlanApprovalPanel(meta) {
 
   btnApprove.addEventListener('click', () => submitPlanApproval(true, '', panel));
   btnCancel.addEventListener('click',  () => submitPlanApproval(false, '', panel));
+  } catch (err) {
+    if (panel && panel.isConnected) panel.remove();
+    if (_planApprovalPanel === panel) _planApprovalPanel = null;
+    console.error('showPlanApprovalPanel failed', { meta, err });
+  }
 }
 
 async function submitPlanApproval(approved, feedback, panel) {
@@ -1415,6 +1508,15 @@ async function submitAnswer(answer, panel) {
 // ── Handle incoming events ───────────────
 function handleEvent(evt) {
   const { category, agent, title, detail, metadata } = evt;
+  const seq = Number(evt?.seq || 0);
+  if (seq) {
+    if (_lastEventSeq && seq <= _lastEventSeq) {
+      console.warn('WS event sequence non-monotonic', { last: _lastEventSeq, current: seq, category, title });
+    } else if (_lastEventSeq && seq > _lastEventSeq + 1) {
+      console.warn('WS event sequence gap detected', { last: _lastEventSeq, current: seq, category, title });
+    }
+    if (seq > _lastEventSeq) _lastEventSeq = seq;
+  }
 
   switch (category) {
     case 'status':
@@ -1450,6 +1552,16 @@ function handleEvent(evt) {
         if (metadata.type === 'intelligence_complete') {
           _onIntelligenceComplete();
         }
+        if (metadata.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
+          scheduleRestoreApprovalPanel('status_event');
+        }
+        if (metadata.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
+          if (metadata.needs_plan_approval && Array.isArray(metadata.pending_plan_items)) {
+            showPlanApprovalPanel(_planMetaFromStatus(metadata));
+          } else {
+            scheduleRestorePlanApprovalPanel('status_event');
+          }
+        }
       }
       break;
 
@@ -1484,10 +1596,12 @@ function handleEvent(evt) {
 
     case 'approval_needed':
       showApprovalPanel(metadata || {});
+      if (!hasApprovalPanel()) scheduleRestoreApprovalPanel('approval_needed_event');
       break;
 
     case 'plan_approval':
       showPlanApprovalPanel(metadata || {});
+      if (!hasPlanApprovalPanel()) scheduleRestorePlanApprovalPanel('plan_approval_event');
       break;
 
     case 'approval_done':
@@ -1709,6 +1823,7 @@ function updateHeader(data) {
 
 // ── WebSocket ────────────────────────────
 let ws;
+let _lastEventSeq = 0;
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -1716,14 +1831,27 @@ function connectWS() {
   ws.onclose = () => setTimeout(connectWS, 3000);
   ws.onerror = () => {};
   ws.onmessage = (e) => {
+    let msg;
     try {
-      const msg = JSON.parse(e.data);
+      msg = JSON.parse(e.data);
+    } catch (err) {
+      console.warn('WS parse error:', err, e.data);
+      return;
+    }
+    try {
       console.log('WS event:', msg);
       if (msg.type === 'event') handleEvent(msg.data);
       else if (msg.type === 'status') updateHeader(msg.data);
       else if (msg.type === 'error') addStatus(`❌ ${msg.data.message}`, 'status-error');
       else if (msg.type === 'ack') addStatus(`✓ ${msg.data}`);
-    } catch (err) { console.warn('WS parse error:', err, e.data); }
+    } catch (err) {
+      console.warn('WS handle error:', err, {
+        type: msg?.type,
+        category: msg?.data?.category,
+        title: msg?.data?.title,
+        seq: msg?.data?.seq,
+      });
+    }
   };
 }
 
@@ -1920,7 +2048,7 @@ connectWS();
 // On page load, check if a task is already waiting for approval or a coder answer
 fetch('/api/status').then(r => r.json()).then(data => {
   updateHeader(data);
-  if (data.phase === 'waiting_for_approval' && !_approvalPanel) {
+  if (data.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
     fetch('/api/pending').then(r => r.json()).then(p => {
       if (p && p.needs_human_approval) showApprovalPanel(p.pending_approval || {});
     }).catch(() => {});
@@ -1930,7 +2058,7 @@ fetch('/api/status').then(r => r.json()).then(data => {
       if (q && q.needs_coder_answer) showQuestionPanel(q.coder_question || {});
     }).catch(() => {});
   }
-  if (data.phase === 'waiting_for_plan_approval' && !_planApprovalPanel) {
+  if (data.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
     const items = data.pending_plan_items || [];
     showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
   }
@@ -1950,8 +2078,11 @@ fetch('/api/status').then(r => r.json()).then(data => {
 setInterval(() => {
   fetch('/api/status').then(r => r.json()).then(data => {
     updateHeader(data);
+    if (data.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
+      scheduleRestoreApprovalPanel('status_poll');
+    }
     // Restore plan approval panel if we're waiting and it's not visible
-    if (data.phase === 'waiting_for_plan_approval' && !_planApprovalPanel) {
+    if (data.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
       const items = data.pending_plan_items || [];
       showPlanApprovalPanel({ items, items_count: items.length, plan_summary: '' });
     }

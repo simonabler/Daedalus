@@ -1913,6 +1913,22 @@ def resume_node(state: GraphState) -> dict:
         payload["input_intent"] = "resume"
         payload["resumed_from_checkpoint"] = True
 
+        # ── Plan approval was written into the checkpoint by mark_latest_plan_approval ──
+        if payload.get("plan_approved") and not payload.get("needs_plan_approval"):
+            feedback = payload.get("plan_approval_feedback", "")
+            if feedback:
+                # Revision requested — route back to planner for one more round
+                payload["phase"] = WorkflowPhase.PLANNING
+                payload["stop_reason"] = ""
+                emit_node_end("planner", "Resume", "Plan revision requested — replanning")
+            else:
+                # Pure GO — route directly to coder, bypass gate
+                payload["phase"] = WorkflowPhase.CODING
+                payload["stop_reason"] = ""
+                emit_node_end("planner", "Resume", "Plan approved — routing to coder")
+            return payload
+
+        # ── Commit-gate approval written by mark_latest_approval ──
         pending = payload.get("pending_approval", {})
         approved = isinstance(pending, dict) and bool(pending.get("approved"))
         if payload.get("needs_human_approval") and not approved:
@@ -3178,11 +3194,25 @@ def plan_approval_gate_node(state: GraphState) -> dict:
     # Still waiting — emit plan for display and halt
     plan_summary = _format_plan_for_human(state.todo_items)
     emit_plan_approval_needed("planner", plan_summary, state.todo_items)
+    pending_plan_items = [
+        {
+            "id": getattr(i, "id", ""),
+            "description": getattr(i, "description", ""),
+            "task_type": getattr(i, "task_type", "coding"),
+            "assigned_agent": getattr(i, "assigned_agent", "") or "",
+        }
+        for i in state.todo_items
+    ]
     emit_status(
         "planner",
         f"⏳ Waiting for plan approval ({len(state.todo_items)} items) — "
         "approve, revise, or cancel in the UI",
-        **_progress_meta(state, "waiting_for_plan_approval"),
+        **{
+            **_progress_meta(state, "waiting_for_plan_approval"),
+            "needs_plan_approval": True,
+            "pending_plan_items": pending_plan_items,
+            "plan_summary": plan_summary,
+        },
     )
     emit_node_end("planner", "Plan Approval Gate", "Halted — waiting for human plan approval")
     return {
