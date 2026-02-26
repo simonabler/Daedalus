@@ -104,7 +104,7 @@ def _on_workflow_event(event: WorkflowEvent) -> None:
             _send_issue_loaded_notification(event.metadata or {}),
             loop,
         )
-    elif event.category == EventCategory.COMMIT and event.metadata.get("pr_url"):
+    elif event.category == EventCategory.COMMIT and (event.metadata or {}).get("pr_url"):
         asyncio.run_coroutine_threadsafe(
             _send_pr_notification(event.metadata),
             loop,

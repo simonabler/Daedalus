@@ -284,3 +284,74 @@ class TestCreateTelegramApp:
 
         assert "approve" in command_names
         assert "reject" in command_names
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bug regression: _on_workflow_event — COMMIT event with None metadata
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestOnWorkflowEventNoneMetadata:
+    """Regression tests for metadata None-guard in _on_workflow_event (bug #56)."""
+
+    def _make_event(self, category_value: str, metadata):
+        from app.core.events import WorkflowEvent, EventCategory
+        return WorkflowEvent(
+            category=EventCategory(category_value),
+            agent="system",
+            title="test",
+            metadata=metadata,
+        )
+
+    def test_commit_event_none_metadata_does_not_raise(self):
+        """COMMIT event with metadata=None must not raise AttributeError."""
+        from app.telegram.bot import _on_workflow_event
+        import app.telegram.bot as bot_module
+
+        # _on_workflow_event exits early if _telegram_app is None
+        original = bot_module._telegram_app
+        bot_module._telegram_app = None  # ensure early exit path
+        try:
+            event = self._make_event("commit", None)
+            # Should not raise
+            _on_workflow_event(event)
+        finally:
+            bot_module._telegram_app = original
+
+    def test_commit_event_without_pr_url_does_not_trigger_pr_notification(self):
+        """A regular commit (no pr_url in metadata) must not call _send_pr_notification."""
+        from app.telegram.bot import _on_workflow_event
+        import app.telegram.bot as bot_module
+        from unittest.mock import MagicMock, patch
+
+        original = bot_module._telegram_app
+        bot_module._telegram_app = None
+        try:
+            event = self._make_event("commit", {"commit_message": "fix: something"})
+            with patch.object(bot_module, "_send_pr_notification") as mock_pr:
+                _on_workflow_event(event)
+                mock_pr.assert_not_called()
+        finally:
+            bot_module._telegram_app = original
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bug regression: issue_loaded event platform field
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestIssueLoadedEventPlatform:
+    """Regression test: issue_loaded event must include platform field (bug #56)."""
+
+    def test_issue_loaded_event_contains_platform(self):
+        """_hydrate_issue must emit issue_loaded with a platform field."""
+        import re
+        nodes_src = open("app/core/nodes.py").read()
+        idx = nodes_src.find('title="issue_loaded"')
+        assert idx != -1, "issue_loaded event not found in nodes.py"
+        # Find the metadata block following this title
+        meta_start = nodes_src.find("metadata={", idx)
+        meta_end = nodes_src.find("},", meta_start) + 2
+        meta_block = nodes_src[meta_start:meta_end]
+        assert "platform" in meta_block, (
+            "issue_loaded event metadata must include 'platform' field for "
+            "correct UI icon (🐙 GitHub vs 🦊 GitLab)"
+        )

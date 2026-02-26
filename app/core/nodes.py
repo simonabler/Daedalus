@@ -986,6 +986,7 @@ def _hydrate_issue(state: GraphState) -> tuple[str, dict]:
                 "issue_title": issue.title,
                 "repo_ref": issue_ref.repo_ref,
                 "issue_url": issue.url,
+                "platform": issue_ref.platform,
             },
         ))
 

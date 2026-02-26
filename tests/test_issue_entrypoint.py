@@ -101,6 +101,24 @@ class TestParseIssueRefBare:
         assert ref is not None
         assert ref.issue_id == 99
 
+    def test_issue_hash_N_in_repo(self):
+        """'issue #N in repo' should match — hash is optional in bare pattern."""
+        ref = parse_issue_ref("fix issue #7 in owner/repo")
+        assert ref is not None
+        assert ref.issue_id == 7
+        assert "owner/repo" in ref.repo_ref
+
+    def test_issue_hash_N_on_repo(self):
+        ref = parse_issue_ref("issue #42 on owner/repo")
+        assert ref is not None
+        assert ref.issue_id == 42
+
+    def test_issue_hash_N_for_repo(self):
+        ref = parse_issue_ref("resolve issue #13 for my-org/my-api")
+        assert ref is not None
+        assert ref.issue_id == 13
+        assert "my-org/my-api" in ref.repo_ref
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. parse_issue_ref — #N shorthand
