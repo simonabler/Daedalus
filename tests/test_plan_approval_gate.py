@@ -133,6 +133,24 @@ def test_gate_emits_plan_approval_event_when_waiting():
     assert args[0][2] == state.todo_items   # items argument
 
 
+def test_gate_status_waiting_includes_pending_plan_items_metadata():
+    state = _state(needs_plan_approval=True, plan_approved=False, todo_items=[_make_item("add endpoint", task_type="coding", agent="coder_a")])
+    with patch("app.core.nodes.emit_plan_approval_needed"), \
+         patch("app.core.nodes.emit_status") as mock_status, \
+         patch("app.core.nodes.emit_node_start"), \
+         patch("app.core.nodes.emit_node_end"):
+        plan_approval_gate_node(state)
+
+    mock_status.assert_called_once()
+    kwargs = mock_status.call_args.kwargs
+    assert kwargs["phase"] == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL
+    assert kwargs["needs_plan_approval"] is True
+    assert isinstance(kwargs["pending_plan_items"], list)
+    assert kwargs["pending_plan_items"][0]["description"] == "add endpoint"
+    assert kwargs["pending_plan_items"][0]["task_type"] == "coding"
+    assert kwargs["pending_plan_items"][0]["assigned_agent"] == "coder_a"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. plan_approval_gate_node — approved without feedback → CODING
 # ═══════════════════════════════════════════════════════════════════════════
@@ -462,6 +480,7 @@ def test_status_includes_needs_plan_approval_true():
         assert data["needs_plan_approval"] is True
         assert len(data["pending_plan_items"]) == 1
         assert data["pending_plan_items"][0]["description"] == "add endpoint"
+        assert "assigned_agent" in data["pending_plan_items"][0]
     finally:
         srv._current_state = original
 

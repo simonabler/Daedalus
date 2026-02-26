@@ -3178,11 +3178,25 @@ def plan_approval_gate_node(state: GraphState) -> dict:
     # Still waiting — emit plan for display and halt
     plan_summary = _format_plan_for_human(state.todo_items)
     emit_plan_approval_needed("planner", plan_summary, state.todo_items)
+    pending_plan_items = [
+        {
+            "id": getattr(i, "id", ""),
+            "description": getattr(i, "description", ""),
+            "task_type": getattr(i, "task_type", "coding"),
+            "assigned_agent": getattr(i, "assigned_agent", "") or "",
+        }
+        for i in state.todo_items
+    ]
     emit_status(
         "planner",
         f"⏳ Waiting for plan approval ({len(state.todo_items)} items) — "
         "approve, revise, or cancel in the UI",
-        **_progress_meta(state, "waiting_for_plan_approval"),
+        **{
+            **_progress_meta(state, "waiting_for_plan_approval"),
+            "needs_plan_approval": True,
+            "pending_plan_items": pending_plan_items,
+            "plan_summary": plan_summary,
+        },
     )
     emit_node_end("planner", "Plan Approval Gate", "Halted — waiting for human plan approval")
     return {

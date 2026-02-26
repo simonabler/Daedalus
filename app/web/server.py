@@ -35,6 +35,8 @@ _current_state: GraphState | None = None
 _context_usage_summary: dict = {}
 _ws_clients: set[WebSocket] = set()
 _task_queue: asyncio.Queue | None = None
+_ws_outbox: asyncio.Queue | None = None
+_ws_pump_task: asyncio.Task | None = None
 
 
 # ── Models ────────────────────────────────────────────────────────────────
@@ -78,6 +80,43 @@ class PlanApproveRequest(BaseModel):
 
 # ── WebSocket broadcast (wired to event bus) ─────────────────────────────
 
+async def _fanout_ws_message(message: str, label: str) -> None:
+    """Send a pre-serialised message to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+
+    disconnected: set[WebSocket] = set()
+    for ws in tuple(_ws_clients):
+        try:
+            logger.debug("WS send | %s", label)
+            await ws.send_text(message)
+        except Exception as exc:
+            logger.warning("WS send failed | %s | %s", label, exc)
+            disconnected.add(ws)
+    if disconnected:
+        _ws_clients.difference_update(disconnected)
+
+
+async def _enqueue_ws_message(message: str, label: str) -> None:
+    """Queue a message for ordered WebSocket delivery (fallback to direct send)."""
+    if not _ws_clients:
+        return
+    if _ws_outbox is None:
+        await _fanout_ws_message(message, label)
+        return
+    await _ws_outbox.put((label, message))
+
+
+async def _broadcast_pump() -> None:
+    """Serialize WebSocket sends so message ordering is preserved."""
+    while True:
+        label, message = await _ws_outbox.get()
+        try:
+            await _fanout_ws_message(message, label)
+        finally:
+            _ws_outbox.task_done()
+
+
 async def _broadcast_event(event: WorkflowEvent) -> None:
     """Forward a workflow event to all connected WebSocket clients."""
     global _context_usage_summary, _current_state
@@ -118,38 +157,22 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
         entry["cost_usd"]           = round(entry["cost_usd"] + meta.get("cost_usd", 0.0), 6)
         _current_state.token_budget = budget
 
-    if not _ws_clients:
-        return
-
-    message = json.dumps({"type": "event", "data": event.to_dict()})
-    disconnected: set[WebSocket] = set()
-    # Iterate over a snapshot so connects/disconnects during await do not mutate
-    # the collection we are iterating.
-    for ws in tuple(_ws_clients):
-        try:
-            await ws.send_text(message)
-        except Exception:
-            disconnected.add(ws)
-    if disconnected:
-        _ws_clients.difference_update(disconnected)
+    payload = event.to_dict()
+    message = json.dumps({"type": "event", "data": payload})
+    label = f"event:{event.category.value} seq={payload.get('seq', '?')} title={event.title[:80]}"
+    logger.debug("WS enqueue | %s", label)
+    await _enqueue_ws_message(message, label)
 
 
 async def _broadcast_raw(event_type: str, data: Any) -> None:
     """Send a raw message (non-event) to all clients."""
-    if not _ws_clients:
-        return
-
     message = json.dumps({"type": event_type, "data": data, "ts": datetime.now(UTC).isoformat()})
-    disconnected: set[WebSocket] = set()
-    # Iterate over a snapshot so connects/disconnects during await do not mutate
-    # the collection we are iterating.
-    for ws in tuple(_ws_clients):
-        try:
-            await ws.send_text(message)
-        except Exception:
-            disconnected.add(ws)
-    if disconnected:
-        _ws_clients.difference_update(disconnected)
+    suffix = ""
+    if isinstance(data, dict) and data.get("phase"):
+        suffix = f" phase={data['phase']}"
+    label = f"raw:{event_type}{suffix}"
+    logger.debug("WS enqueue | %s", label)
+    await _enqueue_ws_message(message, label)
 
 
 # ── Background worker ─────────────────────────────────────────────────────
@@ -320,13 +343,16 @@ def _register_pending_question(state: GraphState, repo_root: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _task_queue
+    global _task_queue, _ws_outbox, _ws_pump_task
     # Create queue on the current event loop
     _task_queue = asyncio.Queue()
+    _ws_outbox = asyncio.Queue()
     # Clear any previous shutdown flag (important for test re-runs)
     reset_shutdown()
     # Register main event loop for cross-thread event delivery
     set_event_loop(asyncio.get_running_loop())
+    # Serialize outbound WebSocket sends to preserve ordering under bursty events
+    _ws_pump_task = asyncio.create_task(_broadcast_pump())
     # Subscribe to event bus
     subscribe_async(_broadcast_event)
     # Start background worker
@@ -336,8 +362,15 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown: signal workflow to stop, then cancel the worker
     request_shutdown()
     worker.cancel()
+    if _ws_pump_task:
+        _ws_pump_task.cancel()
     with suppress(asyncio.CancelledError):
         await worker
+    with suppress(asyncio.CancelledError):
+        if _ws_pump_task:
+            await _ws_pump_task
+    _ws_pump_task = None
+    _ws_outbox = None
     logger.info("Lifespan cleanup complete")
 
 
@@ -382,7 +415,7 @@ async def get_status():
         context_usage=_context_usage_summary,
         needs_plan_approval=_current_state.needs_plan_approval,
         pending_plan_items=[
-            {"id": i.id, "description": i.description, "task_type": i.task_type}
+            {"id": i.id, "description": i.description, "task_type": i.task_type, "assigned_agent": i.assigned_agent}
             for i in _current_state.todo_items
         ] if _current_state.needs_plan_approval else [],
         registered_repos=_repos,

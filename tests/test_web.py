@@ -1,5 +1,8 @@
 """Tests for the FastAPI web server endpoints."""
 
+import asyncio
+import contextlib
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -49,6 +52,71 @@ class TestEventsEndpoint:
     def test_events_limit(self, client):
         resp = client.get("/api/events?limit=5")
         assert resp.status_code == 200
+
+
+class TestWebSocketBroadcastPump:
+    @pytest.mark.asyncio
+    async def test_broadcast_pump_preserves_enqueue_order(self):
+        from app.core.events import EventCategory, WorkflowEvent
+        import app.web.server as srv
+
+        class FakeWS:
+            def __init__(self):
+                self.sent: list[str] = []
+                self._busy = False
+
+            async def send_text(self, message: str):
+                if self._busy:
+                    raise RuntimeError("concurrent send detected")
+                self._busy = True
+                try:
+                    await asyncio.sleep(0)
+                    self.sent.append(message)
+                finally:
+                    self._busy = False
+
+        fake_ws = FakeWS()
+        orig_clients = srv._ws_clients
+        orig_outbox = srv._ws_outbox
+
+        srv._ws_clients = {fake_ws}
+        srv._ws_outbox = asyncio.Queue()
+        pump_task = asyncio.create_task(srv._broadcast_pump())
+        try:
+            await srv._broadcast_event(WorkflowEvent(
+                category=EventCategory.PLAN_APPROVAL,
+                agent="planner",
+                title="plan approval",
+                metadata={"items": []},
+            ))
+            await srv._broadcast_event(WorkflowEvent(
+                category=EventCategory.STATUS,
+                agent="planner",
+                title="waiting",
+                metadata={"phase": "waiting_for_plan_approval"},
+            ))
+            await srv._broadcast_raw("status", {"phase": "waiting_for_plan_approval"})
+
+            await asyncio.wait_for(srv._ws_outbox.join(), timeout=1.0)
+
+            assert len(fake_ws.sent) == 3
+            first = json.loads(fake_ws.sent[0])
+            second = json.loads(fake_ws.sent[1])
+            third = json.loads(fake_ws.sent[2])
+
+            assert first["type"] == "event"
+            assert first["data"]["category"] == "plan_approval"
+            assert isinstance(first["data"]["seq"], int)
+            assert second["type"] == "event"
+            assert second["data"]["category"] == "status"
+            assert second["data"]["seq"] > first["data"]["seq"]
+            assert third["type"] == "status"
+        finally:
+            pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump_task
+            srv._ws_clients = orig_clients
+            srv._ws_outbox = orig_outbox
 
 
 class TestTaskEndpoint:
