@@ -1913,6 +1913,22 @@ def resume_node(state: GraphState) -> dict:
         payload["input_intent"] = "resume"
         payload["resumed_from_checkpoint"] = True
 
+        # ── Plan approval was written into the checkpoint by mark_latest_plan_approval ──
+        if payload.get("plan_approved") and not payload.get("needs_plan_approval"):
+            feedback = payload.get("plan_approval_feedback", "")
+            if feedback:
+                # Revision requested — route back to planner for one more round
+                payload["phase"] = WorkflowPhase.PLANNING
+                payload["stop_reason"] = ""
+                emit_node_end("planner", "Resume", "Plan revision requested — replanning")
+            else:
+                # Pure GO — route directly to coder, bypass gate
+                payload["phase"] = WorkflowPhase.CODING
+                payload["stop_reason"] = ""
+                emit_node_end("planner", "Resume", "Plan approved — routing to coder")
+            return payload
+
+        # ── Commit-gate approval written by mark_latest_approval ──
         pending = payload.get("pending_approval", {})
         approved = isinstance(pending, dict) and bool(pending.get("approved"))
         if payload.get("needs_human_approval") and not approved:

@@ -593,15 +593,23 @@ async def plan_approve(req: PlanApproveRequest):
         return {"status": "stopped", "stop_reason": "plan_rejected_by_human"}
 
     # GO (with or without feedback)
+    feedback = req.feedback.strip()
     _current_state.plan_approved = True
-    _current_state.plan_approval_feedback = req.feedback.strip()
+    _current_state.plan_approval_feedback = feedback
     _current_state.needs_plan_approval = False
 
     repo_root = str(_current_state.repo_root or "")
+
+    # Persist the approval into the checkpoint so that when _process_tasks
+    # creates a fresh GraphState for the "resume" task, resume_node can read
+    # plan_approved=True from disk and route directly to the coder (or planner
+    # for a revision) without going back through plan_approval_gate.
+    checkpoint_manager.mark_latest_plan_approval(approved=True, feedback=feedback, repo_root=repo_root)
+
     if _task_queue is not None:
         await _task_queue.put(TaskRequest(task="resume", repo_path=repo_root))
 
-    action = "revision_requested" if req.feedback.strip() else "coding_started"
+    action = "revision_requested" if feedback else "coding_started"
     return {"status": "approved", "action": action}
 
 

@@ -110,4 +110,56 @@ class CheckpointManager:
             return False
 
 
+    def mark_latest_plan_approval(
+        self,
+        approved: bool,
+        feedback: str = "",
+        repo_root: str = "",
+    ) -> bool:
+        """Write plan-approval result into the latest checkpoint on disk.
+
+        Mirrors :meth:`mark_latest_approval` for the commit-gate.
+        Called by the web server after ``POST /api/plan-approve`` so that
+        when ``resume_node`` reloads the checkpoint it finds
+        ``plan_approved=True`` and can route straight to the coder (or back
+        to the planner for a revision round).
+        """
+        checkpoint_dir = self._checkpoint_dir(repo_root)
+        latest_file = checkpoint_dir / "latest.json"
+        if not latest_file.exists():
+            return False
+        try:
+            payload = json.loads(latest_file.read_text(encoding="utf-8"))
+            state_payload = payload.get("state", {})
+            state_payload["plan_approved"] = approved
+            state_payload["needs_plan_approval"] = not approved
+            if feedback:
+                state_payload["plan_approval_feedback"] = feedback
+            # Set phase so resume_node can route without re-entering the gate.
+            if approved and not feedback:
+                # Pure GO — proceed to coding
+                state_payload["phase"] = "coding"
+                state_payload["stop_reason"] = ""
+            elif approved and feedback:
+                # Revision requested — planner runs one more round
+                state_payload["phase"] = "planning"
+                state_payload["plan_revision_count"] = (
+                    state_payload.get("plan_revision_count", 0) + 1
+                )
+                state_payload["stop_reason"] = ""
+            payload["state"] = state_payload
+            latest_file.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+            checkpoint_id = payload.get("checkpoint_id")
+            if checkpoint_id:
+                specific = checkpoint_dir / f"{checkpoint_id}.json"
+                if specific.exists():
+                    specific.write_text(
+                        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+                    )
+            return True
+        except Exception as exc:
+            logger.error("Failed to mark latest plan approval: %s", exc)
+            return False
+
+
 checkpoint_manager = CheckpointManager()
