@@ -175,17 +175,54 @@ def get_llm(role: AgentRole) -> BaseChatModel:
 
 
 def load_system_prompt(role: AgentRole) -> str:
-    """Load the system prompt file for a role."""
-    mapping = {
+    """Load the system prompt for a role.
+
+    Coder and reviewer prompts are assembled from a shared base file
+    (``coder_base.txt`` / ``reviewer_base.txt``) plus a role-specific header,
+    keeping both variants in sync automatically.
+    Edit the base file — not the individual coder_a/b or reviewer files.
+    """
+    _CODER_BASE = "coder_base.txt"
+    _REVIEWER_BASE = "reviewer_base.txt"
+
+    _HEADERS: dict[str, tuple[str, str]] = {
+        "coder_a": (
+            _CODER_BASE,
+            "You are **Coder A** for the Daedalus system.\n"
+            "After you implement, **Coder B** will review your work.\n\n",
+        ),
+        "coder_b": (
+            _CODER_BASE,
+            "You are **Coder B** for the Daedalus system.\n"
+            "After you implement, **Coder A** will review your work.\n\n",
+        ),
+        "reviewer_a": (
+            _REVIEWER_BASE,
+            "You are **Peer Reviewer A** for the Daedalus system.\n"
+            "Your job: review code changes produced by **Coder B**.\n\n",
+        ),
+        "reviewer_b": (
+            _REVIEWER_BASE,
+            "You are **Peer Reviewer B** for the Daedalus system.\n"
+            "Your job: review code changes produced by **Coder A**.\n\n",
+        ),
+    }
+
+    if role in _HEADERS:
+        base_file, header = _HEADERS[role]
+        base_path = PROMPTS_DIR / base_file
+        if not base_path.exists():
+            raise FileNotFoundError(f"Base prompt not found: {base_path}")
+        return header + base_path.read_text(encoding="utf-8")
+
+    _DIRECT: dict[str, str] = {
         "planner": "supervisor_planner.txt",
-        "coder_a": "coder_a.txt",
-        "coder_b": "coder_b.txt",
-        "reviewer_a": "peer_reviewer_a.txt",
-        "reviewer_b": "peer_reviewer_b.txt",
         "documenter": "documenter.txt",
         "tester": "tester.txt",
     }
-    prompt_file = PROMPTS_DIR / mapping[role]
+    if role not in _DIRECT:
+        raise ValueError(f"Unknown agent role: {role!r}")
+    prompt_file = PROMPTS_DIR / _DIRECT[role]
     if not prompt_file.exists():
         raise FileNotFoundError(f"System prompt not found: {prompt_file}")
     return prompt_file.read_text(encoding="utf-8")

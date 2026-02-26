@@ -505,6 +505,22 @@ def _invoke_with_budget(
     return result, {"token_budget": _budget_dict(budget)}
 
 
+def _os_note(execution_platform: str) -> str:
+    """Return a platform-appropriate OS note for agent prompts.
+
+    Uses the detected execution platform string (from ``platform.platform()``)
+    to produce a concise, accurate shell-usage hint so agents do not guess
+    wrong commands.
+    """
+    p = (execution_platform or "").lower()
+    if "windows" in p:
+        return "Runtime is **Windows** — use PowerShell syntax for all terminal commands."
+    if "darwin" in p or "macos" in p:
+        return "Runtime is **macOS** — use standard bash/zsh syntax for all terminal commands."
+    # Default: Linux / unknown
+    return "Runtime is **Linux** — use standard bash syntax for all terminal commands."
+
+
 def _progress_meta(state: GraphState, phase: str, done_override: int | None = None) -> dict:
     total = len(state.todo_items)
     current_idx = state.current_item_index + 1 if state.current_item_index >= 0 else 0
@@ -2317,7 +2333,7 @@ def coder_node(state: GraphState) -> dict:
         f"**Description**: {item.description}",
         f"**Your peer reviewer**: {_reviewer_label(reviewer)}",
         f"**Execution platform**: {state.execution_platform or platform.platform()}",
-        "**OS Note**: Runtime is Windows; terminal commands use PowerShell.",
+        f"**OS Note**: {_os_note(state.execution_platform or platform.platform())}",
     ]
     if item.acceptance_criteria:
         prompt_parts.append("**Acceptance Criteria**:\n" + "\n".join(f"- {ac}" for ac in item.acceptance_criteria))
@@ -2811,7 +2827,7 @@ def tester_node(state: GraphState) -> dict:
         f"## Verification Task\n\n"
         f"**Item**: {item.id} — {item.description}\n"
         f"**Execution platform**: {state.execution_platform or platform.platform()}\n"
-        f"**OS Note**: Runtime is Windows and terminal calls use PowerShell.\n"
+        f"**OS Note**: {_os_note(state.execution_platform or platform.platform())}\n"
     )
     if item.acceptance_criteria:
         prompt += "**Acceptance Criteria**:\n" + "\n".join(f"- {ac}" for ac in item.acceptance_criteria) + "\n"
