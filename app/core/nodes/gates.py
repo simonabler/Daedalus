@@ -72,7 +72,12 @@ def _format_plan_for_human(items: list) -> str:
         agent = getattr(item, "assigned_agent", "") or ""
         agent_label = _coder_label(agent) if agent else ""
         suffix = f"  → {agent_label}" if agent_label else ""
-        lines.append(f"  {idx}. [{task_type}] {desc}{suffix}")
+        status = getattr(item, "status", None)
+        if status is not None and str(status) == "done":
+            mark = "✅"
+        else:
+            mark = "⬜"
+        lines.append(f"  {mark} {idx}. [{task_type}] {desc}{suffix}")
     return "\n".join(lines)
 
 

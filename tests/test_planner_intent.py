@@ -94,4 +94,6 @@ def test_resume_node_prefers_checkpoint(monkeypatch):
 
     assert result["input_intent"] == "resume"
     assert result["resumed_from_checkpoint"] is True
-    assert result["phase"] == WorkflowPhase.CODING
+    # Resume always shows the plan for review first (user types 'go' to start coding)
+    assert result["phase"] == WorkflowPhase.PLANNING
+    assert result["needs_plan_approval"] is True

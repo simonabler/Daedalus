@@ -125,25 +125,62 @@ def planner_plan_node(state: GraphState) -> dict:
         }
 
     # ── Guard: don't overwrite an existing plan with pending items ─────────
-    # If tasks/todo.md has unchecked items, resume them instead of starting
-    # from scratch.  This prevents loss of progress after a server restart
-    # where the user sends a new task identical to the one in progress.
+    # If tasks/todo.md has unchecked items, check whether the new request
+    # is essentially the same task (→ resume) or something additional
+    # (→ keep done items, append new items for the extra work).
+    _existing_done_items: list[TodoItem] = []
+    _existing_pending_items: list[TodoItem] = []
+    _merge_existing = False
+
     existing = _resume_from_saved_todo(state)
     if existing and existing.get("todo_items"):
-        existing_items = existing["todo_items"]
+        existing_items: list[TodoItem] = existing["todo_items"]
         pending_count = sum(1 for i in existing_items if i.status != ItemStatus.DONE)
         done_count = sum(1 for i in existing_items if i.status == ItemStatus.DONE)
         if pending_count > 0 and done_count > 0:
-            # There IS partial progress — resume it instead of replanning.
-            emit_status(
-                "planner",
-                f"Found existing plan with {done_count} done / {pending_count} pending "
-                f"items — resuming instead of replanning.",
-                **_progress_meta(state, "planning"),
+            # Read original plan header to compare with new request
+            todo_raw = read_file.invoke({"path": "tasks/todo.md"})
+            original_request = ""
+            if not todo_raw.startswith("ERROR"):
+                for line in todo_raw.splitlines():
+                    if line.startswith("## Plan:"):
+                        original_request = line.replace("## Plan:", "").strip()
+                        break
+
+            # Heuristic: if the new request is very similar to the original,
+            # just resume.  Otherwise, keep done items and plan additional work.
+            new_req_lower = state.user_request.strip().lower()
+            old_req_lower = original_request.strip().lower()
+            is_same_request = (
+                new_req_lower == old_req_lower
+                or new_req_lower in old_req_lower
+                or old_req_lower in new_req_lower
+                or new_req_lower in {"resume", "continue", "weiter", "fortsetzen"}
             )
-            existing["input_intent"] = "resume_workflow"
-            emit_node_end("planner", "Planning", f"Resumed existing plan ({done_count} done, {pending_count} pending)")
-            return existing
+
+            if is_same_request:
+                emit_status(
+                    "planner",
+                    f"Found existing plan with {done_count} done / {pending_count} pending "
+                    f"items — resuming.",
+                    **_progress_meta(state, "planning"),
+                )
+                existing["input_intent"] = "resume_workflow"
+                emit_node_end("planner", "Planning", f"Resumed existing plan ({done_count} done, {pending_count} pending)")
+                return existing
+            else:
+                # Different request — keep done items, but let the planner
+                # create NEW items for the additional work.  We'll merge them
+                # after the LLM call below.
+                emit_status(
+                    "planner",
+                    f"Existing plan has {done_count} completed items — keeping them.  "
+                    f"Planning additional work for: {state.user_request[:80]}…",
+                    **_progress_meta(state, "planning"),
+                )
+                _existing_done_items = [i for i in existing_items if i.status == ItemStatus.DONE]
+                _existing_pending_items = [i for i in existing_items if i.status != ItemStatus.DONE]
+                _merge_existing = True
 
     try:
         ensure_memory_files()
@@ -209,6 +246,27 @@ def planner_plan_node(state: GraphState) -> dict:
     except Exception:
         pass
 
+    # If we're adding to an existing plan, tell the LLM what's already done
+    if _merge_existing and _existing_done_items:
+        done_summary = "\n".join(
+            f"  ✅ {i.id}: {i.description}" for i in _existing_done_items
+        )
+        context_parts.append(
+            f"IMPORTANT — The following items are ALREADY COMPLETED from a previous plan.  "
+            f"Do NOT re-plan them.  Only create NEW items for the additional work.\n\n"
+            f"Already completed:\n{done_summary}"
+        )
+    if _merge_existing and _existing_pending_items:
+        pending_summary = "\n".join(
+            f"  ⏳ {i.id}: {i.description}" for i in _existing_pending_items
+        )
+        context_parts.append(
+            f"These items are still PENDING from the previous plan.  "
+            f"Include them in your new plan if still relevant, or drop them if "
+            f"the new request supersedes them.\n\n"
+            f"Pending items:\n{pending_summary}"
+        )
+
     prompt = (
         "Analyze the request and create a detailed execution plan.\n\n"
         + "\n\n".join(context_parts)
@@ -255,6 +313,20 @@ def planner_plan_node(state: GraphState) -> dict:
         item.assigned_agent = assigned_agent
         item.assigned_reviewer = _reviewer_for_worker(assigned_agent)
 
+    # ── Merge: preserve done items from previous plan ─────────────────────
+    if _merge_existing and _existing_done_items:
+        # Re-number new items to follow done items
+        offset = len(_existing_done_items)
+        for idx, item in enumerate(items):
+            item.id = f"item-{offset + idx + 1:03d}"
+        items = _existing_done_items + items
+        emit_status(
+            "planner",
+            f"Merged plan: kept {len(_existing_done_items)} completed item(s), "
+            f"added {len(items) - len(_existing_done_items)} new item(s)",
+            **_progress_meta(state, "planning"),
+        )
+
     if items:
         plan_text = "## TODO Plan\n"
         for idx, item in enumerate(items, start=1):
@@ -287,20 +359,28 @@ def planner_plan_node(state: GraphState) -> dict:
     else:
         active_coder, active_reviewer = _assign_coder_pair(0)
 
+    # When merging, start at the first pending item (skip done items)
+    if items:
+        start_idx = next(
+            (idx for idx, i in enumerate(items) if i.status != ItemStatus.DONE),
+            0,
+        )
+    else:
+        start_idx = state.current_item_index
+
     updates = {
         "input_intent": intent,
         "todo_items": items if items else state.todo_items,
-        "current_item_index": 0 if items else state.current_item_index,
+        "current_item_index": start_idx,
+        "completed_items": sum(1 for i in items if i.status == ItemStatus.DONE) if items else state.completed_items,
         "branch_name": branch,
-        # Plan Approval Gate logic:
-        #   First-time plan (revision_count=0) → needs_plan_approval=True, stay in PLANNING
-        #     so _route_after_plan sends us to plan_approval_gate.
-        #   After a human revision (revision_count>=1) → skip gate, go straight to CODING.
-        "phase": WorkflowPhase.CODING if (not items or state.plan_revision_count >= 1) else WorkflowPhase.PLANNING,
+        # Plan Approval Gate: ALWAYS show the plan for human review.
+        # The human must explicitly say "go" / "start" / approve in the UI.
+        "phase": WorkflowPhase.PLANNING if items else WorkflowPhase.CODING,
         "needs_replan": False,
         "active_coder": active_coder,
         "active_reviewer": active_reviewer,
-        "needs_plan_approval": bool(items) and state.plan_revision_count < 1,
+        "needs_plan_approval": bool(items),
         "plan_approved": False,
         "plan_approval_feedback": "",
     }

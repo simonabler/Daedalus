@@ -99,10 +99,12 @@ def _resume_from_saved_todo(state: GraphState) -> dict | None:
                 branch = candidate
                 break
 
+    pending_count = len(pending_indexes)
     emit_status(
         "planner",
-        f"Resumed workflow at item {current_index + 1}/{len(items)}: {current_item.description}",
-        phase="coding",
+        f"Resumed plan from tasks/todo.md — {completed} done, {pending_count} pending.  "
+        f"Review the plan, then type 'go' to continue.",
+        phase="planning",
         items_total=len(items),
         items_done=completed,
         current_index=current_index + 1,
@@ -115,7 +117,9 @@ def _resume_from_saved_todo(state: GraphState) -> dict | None:
         "current_item_index": current_index,
         "completed_items": completed,
         "branch_name": branch or "",
-        "phase": WorkflowPhase.CODING,
+        "phase": WorkflowPhase.PLANNING,
+        "needs_plan_approval": True,
+        "plan_approved": False,
         "active_coder": current_item.assigned_agent or "coder_a",
         "active_reviewer": (
             current_item.assigned_reviewer
@@ -163,31 +167,49 @@ def resume_node(state: GraphState) -> dict:
             payload["stop_reason"] = ""
             emit_node_end("planner", "Resume", "Checkpoint restored; approval detected, resuming commit")
         else:
-            emit_node_end("planner", "Resume", "Checkpoint restored")
+            # Default resume: show the plan for review before continuing.
+            # The user can type "go" to start/resume coding.
+            todo_items = payload.get("todo_items", [])
+            has_pending = any(
+                (i.get("status") if isinstance(i, dict) else getattr(i, "status", None))
+                != ItemStatus.DONE
+                for i in todo_items
+            ) if todo_items else False
+            if has_pending:
+                payload["phase"] = WorkflowPhase.PLANNING
+                payload["needs_plan_approval"] = True
+                payload["plan_approved"] = False
+                payload["stop_reason"] = ""
+                emit_node_end("planner", "Resume", "Checkpoint restored — showing plan for review")
+            else:
+                emit_node_end("planner", "Resume", "Checkpoint restored")
         return payload
 
-    # ── If an active plan is already in memory, resume from it directly ────
-    # This covers the case where the workflow is mid-flight (e.g. waiting for
-    # plan approval, or between items) and the user types "continue" or "resume".
+    # ── If an active plan is already in memory, show it for review ──────
+    # The user can see what's done and pending, then type "go" to continue.
     if state.todo_items:
         pending_items = [i for i in state.todo_items if i.status != ItemStatus.DONE]
         if pending_items:
+            done_count = sum(1 for i in state.todo_items if i.status == ItemStatus.DONE)
             current_idx = next(
                 (idx for idx, i in enumerate(state.todo_items) if i.status != ItemStatus.DONE),
                 state.current_item_index,
             )
             emit_status(
                 "planner",
-                f"Resuming from in-memory plan — {len(pending_items)} item(s) remaining.",
-                **_progress_meta(state, "coding"),
+                f"Resumed plan — {done_count} done, {len(pending_items)} pending.  "
+                f"Review the plan, then type 'go' to continue coding.",
+                **_progress_meta(state, "planning"),
             )
-            emit_node_end("planner", "Resume", f"Resumed in-memory plan at item {current_idx + 1}")
+            emit_node_end("planner", "Resume", f"Plan displayed ({done_count} done, {len(pending_items)} pending) — awaiting approval")
             return {
                 "input_intent": "resume",
                 "resumed_from_checkpoint": False,
-                "phase": WorkflowPhase.CODING,
+                "phase": WorkflowPhase.PLANNING,
                 "current_item_index": current_idx,
                 "stop_reason": "",
+                "needs_plan_approval": True,
+                "plan_approved": False,
             }
 
     resumed = _resume_from_saved_todo(state)

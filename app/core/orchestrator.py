@@ -99,6 +99,10 @@ def _route_after_resume(state: GraphState) -> str:
         return "stopped"
     if state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL:
         return "plan_approval_gate"
+    if state.needs_plan_approval and state.phase == WorkflowPhase.PLANNING:
+        return "plan_approval_gate"
+    if state.phase == WorkflowPhase.PLANNING:
+        return "planner"
     if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
         return "answer_gate"
     if state.phase == WorkflowPhase.CODING:
@@ -246,7 +250,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "resume",
         _route_after_resume,
-        {"coder": "coder", "answer_gate": "answer_gate", "plan_approval_gate": "plan_approval_gate",
+        {"planner": "planner", "coder": "coder", "answer_gate": "answer_gate", "plan_approval_gate": "plan_approval_gate",
          "commit": "commit", "documenter": "documenter", "env_fix": "env_fix", "complete": END, "stopped": END},
     )
     graph.add_conditional_edges(

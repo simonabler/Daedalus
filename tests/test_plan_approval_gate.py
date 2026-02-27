@@ -198,13 +198,12 @@ def test_gate_increments_revision_count():
 # 6. Revision guard in planner_plan_node
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_planner_skips_gate_after_one_revision():
-    """When plan_revision_count >= 1 planner must set needs_plan_approval=False."""
-    # We test this via the state that planner_plan_node produces.
-    # Rather than running the full LLM planner, we verify the guard logic
-    # directly by inspecting what planner_plan_node would set.
-    # We do this by checking that the condition `state.plan_revision_count < 1`
-    # correctly gates the flag — tested via the node's actual return on a mock.
+def test_planner_always_requires_plan_approval():
+    """Plan approval gate is ALWAYS shown, even after revisions.
+
+    The human must explicitly approve ("go"/"start") before coding begins.
+    This replaces the old auto-skip-after-revision behaviour.
+    """
     from app.core.nodes import planner_plan_node
     from app.core.state import GraphState, WorkflowPhase
 
@@ -235,10 +234,10 @@ def test_planner_skips_gate_after_one_revision():
          patch("app.core.nodes._helpers._write_todo_file"):
         result = planner_plan_node(base_state)
 
-    # With plan_revision_count=1, needs_plan_approval must be False
-    assert result.get("needs_plan_approval") is False
-    # And phase must be CODING (bypassing the gate)
-    assert result.get("phase") == WorkflowPhase.CODING
+    # Plan approval is ALWAYS required — even after revision rounds
+    assert result.get("needs_plan_approval") is True
+    # Phase stays PLANNING until the human explicitly approves
+    assert result.get("phase") == WorkflowPhase.PLANNING
 
 
 # ═══════════════════════════════════════════════════════════════════════════
