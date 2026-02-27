@@ -875,8 +875,8 @@ function renderCostModal() {
     <div class="cost-summary">
       <div class="cost-total">$${total.toFixed(4)}</div>
       <div class="cost-meta">${totalTok.toLocaleString()} tokens total</div>
-      ${softHit ? `<div class="cost-limit-warn">⚠️ Soft limit hit ($${softLim.toFixed(2)})</div>` : ''}
-      ${hardHit ? `<div class="cost-limit-error">❌ Hard limit hit ($${hardLim.toFixed(2)})</div>` : ''}
+      ${softHit ? `<div class="cost-limit-warn">⚠ Soft limit hit ($${softLim.toFixed(2)})</div>` : ''}
+      ${hardHit ? `<div class="cost-limit-error">X Hard limit hit ($${hardLim.toFixed(2)})</div>` : ''}
     </div>
     <table class="cost-table">
       <thead>
@@ -965,7 +965,7 @@ function appendToken(agent, token) {
     tag.textContent = AGENT_NAMES[agent] || agent;
 
     const label = document.createElement('span');
-    label.textContent = '● streaming…';
+    label.textContent = '* streaming…';
 
     hdr.appendChild(tag);
     hdr.appendChild(label);
@@ -1172,7 +1172,7 @@ function showApprovalPanel(meta) {
 
   panel.innerHTML = `
     <div class="approval-header">
-      <span class="approval-icon">⚠️</span>
+      <span class="approval-icon">⚠</span>
       <span class="approval-title">HUMAN APPROVAL REQUIRED</span>
       <span class="approval-summary">${esc(meta.summary || '')}</span>
     </div>
@@ -1185,7 +1185,7 @@ function showApprovalPanel(meta) {
     ${prHint}
     <div class="approval-actions">
       <button class="btn-approve" id="btnApprove">✅ APPROVE &amp; PUSH${meta.will_create_pr ? ' + OPEN PR' : ''}</button>
-      <button class="btn-reject"  id="btnReject">❌ REJECT</button>
+      <button class="btn-reject"  id="btnReject">X REJECT</button>
     </div>`;
 
   chat.appendChild(panel);
@@ -1202,8 +1202,8 @@ async function submitApproval(approved, panel) {
   const btnReject  = panel.querySelector('#btnReject');
   btnApprove.disabled = true;
   btnReject.disabled  = true;
-  btnApprove.textContent = approved ? '⏳ Approving…' : '✅ APPROVE';
-  btnReject.textContent  = approved ? '❌ REJECT' : '⏳ Rejecting…';
+  btnApprove.textContent = approved ? '... Approving…' : '✅ APPROVE';
+  btnReject.textContent  = approved ? 'X REJECT' : '... Rejecting…';
 
   try {
     const res = await fetch('/api/approve', {
@@ -1213,11 +1213,11 @@ async function submitApproval(approved, panel) {
     });
     const data = await res.json();
     if (data.error) {
-      addStatus(`❌ Approval error: ${data.error}`, 'status-error');
+      addStatus(`X Approval error: ${data.error}`, 'status-error');
       btnApprove.disabled = false;
       btnReject.disabled  = false;
       btnApprove.textContent = '✅ APPROVE';
-      btnReject.textContent  = '❌ REJECT';
+      btnReject.textContent  = 'X REJECT';
       return;
     }
     // Replace panel with confirmation
@@ -1225,16 +1225,16 @@ async function submitApproval(approved, panel) {
     confirmEl.className = `msg msg-status ${approved ? 'status-verdict-approve' : 'status-error'}`;
     confirmEl.textContent = approved
       ? '✅ Approved — workflow continuing to commit…'
-      : '❌ Rejected — workflow stopped.';
+      : 'X Rejected — workflow stopped.';
     panel.replaceWith(confirmEl);
     _approvalPanel = null;
     scrollBottom();
   } catch (err) {
-    addStatus(`❌ Network error: ${err}`, 'status-error');
+    addStatus(`X Network error: ${err}`, 'status-error');
     btnApprove.disabled = false;
     btnReject.disabled  = false;
     btnApprove.textContent = '✅ APPROVE';
-    btnReject.textContent  = '❌ REJECT';
+    btnReject.textContent  = 'X REJECT';
   }
 }
 
@@ -1316,8 +1316,8 @@ function showPlanApprovalPanel(meta) {
     </div>
     <div class="plan-approval-actions">
       <button class="btn-plan-approve" id="btnPlanApprove">✅ Approve &amp; Start Coding</button>
-      <button class="btn-plan-revise"  id="btnPlanRevise">✏️ Approve with Note</button>
-      <button class="btn-plan-cancel"  id="btnPlanCancel">❌ Cancel</button>
+      <button class="btn-plan-revise"  id="btnPlanRevise">Revise Plan (Note)</button>
+      <button class="btn-plan-cancel"  id="btnPlanCancel">X Cancel</button>
     </div>`;
 
   chat.appendChild(panel);
@@ -1368,10 +1368,10 @@ async function submitPlanApproval(approved, feedback, panel) {
     const msg = document.createElement('div');
     if (!approved) {
       msg.className = 'msg msg-status status-error';
-      msg.textContent = '❌ Task cancelled by user.';
+      msg.textContent = 'X Task cancelled by user.';
     } else if (feedback) {
       msg.className = 'msg msg-status';
-      msg.textContent = '✏️ Revision requested — planner will update the plan…';
+      msg.textContent = 'Revision requested — planner will update the plan…';
     } else {
       msg.className = 'msg msg-status status-verdict-approve';
       msg.textContent = '✅ Plan approved — 🚀 coding started!';
@@ -1485,7 +1485,7 @@ async function submitAnswer(answer, panel) {
     });
     const data = await res.json();
     if (data.error) {
-      addStatus(`❌ Answer error: ${data.error}`, 'status-error');
+      addStatus(`X Answer error: ${data.error}`, 'status-error');
       if (btn) btn.disabled = false;
       if (input) input.disabled = false;
       panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
@@ -1498,7 +1498,7 @@ async function submitAnswer(answer, panel) {
     _questionPanel = null;
     scrollBottom();
   } catch (err) {
-    addStatus(`❌ Network error: ${err}`, 'status-error');
+    addStatus(`X Network error: ${err}`, 'status-error');
     if (btn) btn.disabled = false;
     if (input) input.disabled = false;
     panel.querySelectorAll('.btn-option').forEach(b => b.disabled = false);
@@ -1529,7 +1529,7 @@ function handleEvent(evt) {
       // Always show as prominent status line
       let cls = '';
       if (metadata?.phase === 'complete') cls = 'status-complete';
-      else if (title.includes('❌') || title.includes('Error')) cls = 'status-error';
+      else if (title.includes('X') || title.includes('Error')) cls = 'status-error';
       addStatus(title, cls);
       if (metadata) {
         updateHeader({
@@ -1613,7 +1613,7 @@ function handleEvent(evt) {
         confirmEl.className = `msg msg-status ${approved ? 'status-verdict-approve' : 'status-error'}`;
         confirmEl.textContent = approved
           ? '✅ Approved — workflow continuing to commit…'
-          : '❌ Rejected — workflow stopped.';
+          : 'X Rejected — workflow stopped.';
         _approvalPanel.replaceWith(confirmEl);
         _approvalPanel = null;
         scrollBottom();
@@ -1705,7 +1705,7 @@ function showIssueCard(meta) {
   const repo    = meta.repo_ref     || '';
   const url     = meta.issue_url    || '';
   const platform = meta.platform    || '';
-  const icon    = platform === 'gitlab' ? '🦊' : '🐙';
+  const icon    = platform === 'gitlab' ? '🦊' : 'GitHub';
 
   const card = document.createElement('div');
   card.className = 'issue-card';
@@ -1716,7 +1716,7 @@ function showIssueCard(meta) {
       <span class="ic-title">${esc(title)}</span>
     </div>
     <div class="issue-card-body">
-      ${repo ? `<span class="ic-repo">📁 ${esc(repo)}</span>` : ''}
+      ${repo ? `<span class="ic-repo">Repo ${esc(repo)}</span>` : ''}
       ${url  ? `<span class="ic-url"><a href="${esc(url)}" target="_blank" rel="noopener">🔗 View issue</a></span>` : ''}
       <span style="color:var(--text-faint)">🔄 Starting analysis…</span>
     </div>`;
@@ -1792,7 +1792,7 @@ function updateHeader(data) {
   if (issueBadgeEl) {
     const ir = data.issue_ref;
     if (ir && ir.issue_id) {
-      const icon = ir.platform === 'gitlab' ? '🦊' : '🐙';
+      const icon = ir.platform === 'gitlab' ? '🦊' : 'GitHub';
       issueBadgeEl.textContent = `${icon} #${ir.issue_id}`;
       issueBadgeEl.style.display = '';
     } else if (phase === 'idle' || phase === 'complete') {
@@ -1842,7 +1842,7 @@ function connectWS() {
       console.log('WS event:', msg);
       if (msg.type === 'event') handleEvent(msg.data);
       else if (msg.type === 'status') updateHeader(msg.data);
-      else if (msg.type === 'error') addStatus(`❌ ${msg.data.message}`, 'status-error');
+      else if (msg.type === 'error') addStatus(`X ${msg.data.message}`, 'status-error');
       else if (msg.type === 'ack') addStatus(`✓ ${msg.data}`);
     } catch (err) {
       console.warn('WS handle error:', err, {
@@ -1865,7 +1865,7 @@ function sendTask() {
   } else {
     fetch('/api/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task }) })
       .then(r => r.json()).then(d => addStatus(`✓ Task queued`))
-      .catch(e => addStatus(`❌ Failed: ${e}`, 'status-error'));
+      .catch(e => addStatus(`X Failed: ${e}`, 'status-error'));
   }
 }
 
@@ -2010,7 +2010,7 @@ async function loadIntelligence() {
       sections.push(`
         <div class="intel-section">
           <div class="intel-section-hdr" onclick="toggleSection(this)">
-            <span class="s-icon">🔍</span><span class="s-title">Code Smells</span>
+            <span class="s-icon">Search</span><span class="s-title">Code Smells</span>
             <span class="s-count ${countClass}">${allSmells.length}</span>
           </div>
           <div class="intel-section-body">${rows}${more}</div>
@@ -2069,7 +2069,7 @@ fetch('/api/status').then(r => r.json()).then(data => {
   // Restore issue card if task is in progress with an issue
   if (data.issue_ref && data.phase !== 'idle') {
     const ir = data.issue_ref;
-    const icon = ir.platform === 'gitlab' ? '🦊' : '🐙';
+    const icon = ir.platform === 'gitlab' ? '🦊' : 'GitHub';
     const badgeEl = document.getElementById('issueBadge');
     if (badgeEl) { badgeEl.textContent = `${icon} #${ir.issue_id}`; badgeEl.style.display = ''; }
   }
