@@ -124,6 +124,27 @@ def planner_plan_node(state: GraphState) -> dict:
             "stop_reason": "resume_not_found",
         }
 
+    # ── Guard: don't overwrite an existing plan with pending items ─────────
+    # If tasks/todo.md has unchecked items, resume them instead of starting
+    # from scratch.  This prevents loss of progress after a server restart
+    # where the user sends a new task identical to the one in progress.
+    existing = _resume_from_saved_todo(state)
+    if existing and existing.get("todo_items"):
+        existing_items = existing["todo_items"]
+        pending_count = sum(1 for i in existing_items if i.status != ItemStatus.DONE)
+        done_count = sum(1 for i in existing_items if i.status == ItemStatus.DONE)
+        if pending_count > 0 and done_count > 0:
+            # There IS partial progress — resume it instead of replanning.
+            emit_status(
+                "planner",
+                f"Found existing plan with {done_count} done / {pending_count} pending "
+                f"items — resuming instead of replanning.",
+                **_progress_meta(state, "planning"),
+            )
+            existing["input_intent"] = "resume_workflow"
+            emit_node_end("planner", "Planning", f"Resumed existing plan ({done_count} done, {pending_count} pending)")
+            return existing
+
     try:
         ensure_memory_files()
     except Exception as exc:
@@ -137,7 +158,7 @@ def planner_plan_node(state: GraphState) -> dict:
                 f"Compressing memory: {key} ({info['chars']} chars)",
                 **_progress_meta(state, "planning"),
             )
-            _compress_memory_file(key)
+            _compress_memory_file(key, state)
 
     total_chars = sum(s["chars"] for s in stats.values())
     if total_chars > 0:
@@ -289,12 +310,16 @@ def planner_plan_node(state: GraphState) -> dict:
     return updates
 
 
-def _compress_memory_file(key: str) -> None:
+def _compress_memory_file(key: str, state: GraphState | None = None) -> None:
     """Use the planner LLM to compress an oversized memory file."""
     prompt = build_compression_prompt(key)
     if not prompt:
         return
     try:
+        if state is None:
+            # Without state, skip LLM compression (no budget context).
+            logger.warning("Memory compression skipped for %s: no state context", key)
+            return
         result, budget_update = _invoke_with_budget(
             state, "planner", [HumanMessage(content=prompt)],
             tools=None, inject_memory=False, node="planner_review",
@@ -428,6 +453,7 @@ def planner_review_node(state: GraphState) -> dict:
     emit_verdict("planner", verdict, detail=result, item_id=item.id)
 
     if verdict == "REWORK":
+        item.rework_count += 1
         item.review_notes = result
         item.status = ItemStatus.IN_PROGRESS
         if item.rework_count >= get_settings().max_rework_cycles_per_item:
