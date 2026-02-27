@@ -134,6 +134,18 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
             "compressed_count":  compressed_count,
         }
 
+    # Update _current_state with intelligence data mid-workflow so
+    # /api/intelligence-summary works before the workflow completes.
+    if (event.metadata and event.metadata.get("type") == "intelligence_complete"
+            and _current_state is not None):
+        meta = event.metadata
+        _current_state.static_issues = meta.get("_intel_static_issues", [])
+        _current_state.code_smells = meta.get("_intel_code_smells", [])
+        _current_state.call_graph = meta.get("_intel_call_graph", {})
+        _current_state.dependency_graph = meta.get("_intel_dependency_graph", {})
+        _current_state.intelligence_cache_key = meta.get("_intel_cache_key", "")
+        _current_state.intelligence_cached = meta.get("_intel_cached", False)
+
     # Track cumulative token spend in _current_state so /api/status reflects
     # live costs even while the workflow is still running (not just at end).
     if event.category.value == "token_usage" and event.metadata and _current_state is not None:
@@ -145,7 +157,7 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
         )
         # Keep per_agent breakdown up-to-date
         per_agent = budget.setdefault("per_agent", {})
-        agent = meta.get("agent") or meta.get("asked_by", "unknown")
+        agent = event.agent or meta.get("agent") or meta.get("asked_by", "unknown")
         if agent not in per_agent:
             per_agent[agent] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
                                 "total_tokens": 0, "cost_usd": 0.0}
@@ -156,6 +168,17 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
         entry["total_tokens"]      += meta.get("total_tokens", 0)
         entry["cost_usd"]           = round(entry["cost_usd"] + meta.get("cost_usd", 0.0), 6)
         _current_state.token_budget = budget
+
+        # Enrich the event payload with accumulated budget data so the UI
+        # can render the full cost breakdown without extra API calls.
+        event.metadata["total_cost_usd"] = budget["total_cost_usd"]
+        event.metadata["total_tokens"]   = budget["total_tokens"]
+        event.metadata["per_agent"]      = per_agent
+        settings = get_settings()
+        event.metadata["soft_limit_usd"] = settings.token_budget_soft_limit_usd
+        event.metadata["hard_limit_usd"] = settings.token_budget_hard_limit_usd
+        event.metadata["soft_limit_hit"] = budget["total_cost_usd"] >= settings.token_budget_soft_limit_usd > 0
+        event.metadata["hard_limit_hit"] = budget["total_cost_usd"] >= settings.token_budget_hard_limit_usd > 0
 
     payload = event.to_dict()
     message = json.dumps({"type": "event", "data": payload})

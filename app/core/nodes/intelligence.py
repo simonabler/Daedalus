@@ -162,6 +162,14 @@ def _emit_intelligence_complete(data: dict) -> None:
                 "cycles": n_cycles,
                 "functions": n_funcs,
                 "modules": n_modules,
+                # Full data for server-side caching (drives /api/intelligence-summary)
+                "_intel_static_issues": data.get("static_issues", []),
+                "_intel_code_smells": data.get("code_smells", []),
+                "_intel_call_graph": data.get("call_graph", {}),
+                "_intel_dependency_graph": data.get("dependency_graph", {}),
+                "_intel_dep_cycles": data.get("dep_cycles", []),
+                "_intel_cache_key": data.get("intelligence_cache_key", ""),
+                "_intel_cached": data.get("intelligence_cached", False),
             },
         ))
     except Exception as exc:
