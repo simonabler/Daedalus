@@ -197,7 +197,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is not None
@@ -216,7 +216,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         client.create_pr.assert_called_once()
@@ -236,7 +236,7 @@ class TestCreatePrForBranch:
         )
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is not None
@@ -249,7 +249,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         _, pr_req = client.create_pr.call_args[0]
@@ -263,7 +263,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         _, pr_req = client.create_pr.call_args[0]
@@ -276,7 +276,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         _, pr_req = client.create_pr.call_args[0]
@@ -291,7 +291,7 @@ class TestCreatePrForBranch:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         _, pr_req = client.create_pr.call_args[0]
@@ -308,7 +308,7 @@ class TestCreatePrEdgeCases:
         from app.core.nodes import _create_pr_for_branch
 
         state = _completed_state()
-        with patch("app.core.nodes.get_settings", return_value=_mock_settings(auto_create_pr=False)):
+        with patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings(auto_create_pr=False)):
             result = _create_pr_for_branch(state)
 
         assert result is None
@@ -317,7 +317,7 @@ class TestCreatePrEdgeCases:
         from app.core.nodes import _create_pr_for_branch
 
         state = _completed_state(repo_ref="")
-        with patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+        with patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is None
@@ -326,7 +326,7 @@ class TestCreatePrEdgeCases:
         from app.core.nodes import _create_pr_for_branch
 
         state = _completed_state(branch_name="")
-        with patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+        with patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is None
@@ -337,7 +337,7 @@ class TestCreatePrEdgeCases:
 
         state = _completed_state()
         with patch("infra.factory.get_forge_client", side_effect=ForgeError("auth failed")), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is None
@@ -350,7 +350,7 @@ class TestCreatePrEdgeCases:
         client.create_pr.side_effect = RuntimeError("network timeout")
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             result = _create_pr_for_branch(state)
 
         assert result is None
@@ -406,7 +406,7 @@ class TestTryPostPrLinkOnIssue:
         client = _mock_forge_client()
 
         with patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             _create_pr_for_branch(state)
 
         # post_comment called at least once (once for PR link on issue)
@@ -496,10 +496,10 @@ class TestCommitterNodePR:
         state = self._make_committer_state(n_items=1)
         client = _mock_forge_client()
 
-        with patch.object(nodes, "git_commit_and_push") as mock_push, \
-             patch.object(nodes, "git_command", return_value=""), \
+        with patch("app.core.nodes.committer.git_commit_and_push") as mock_push, \
+             patch("app.core.nodes.gates.git_command", return_value=""), \
              patch("infra.factory.get_forge_client", return_value=client), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             mock_push.invoke = MagicMock(return_value="[main abc1234] fix commit")
             result = nodes.committer_node(state)
 
@@ -524,8 +524,8 @@ class TestCommitterNodePR:
             pending_approval={"approved": True},
         )
 
-        with patch.object(nodes, "git_commit_and_push") as mock_push, \
-             patch.object(nodes, "git_command", return_value=""):
+        with patch("app.core.nodes.committer.git_commit_and_push") as mock_push, \
+             patch("app.core.nodes.gates.git_command", return_value=""):
             mock_push.invoke = MagicMock(return_value="[main abc] commit")
             result = nodes.committer_node(state)
 
@@ -538,9 +538,9 @@ class TestCommitterNodePR:
 
         state = self._make_committer_state(n_items=1)
 
-        with patch.object(nodes, "git_commit_and_push") as mock_push, \
-             patch.object(nodes, "git_command", return_value=""), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings(auto_create_pr=False)):
+        with patch("app.core.nodes.committer.git_commit_and_push") as mock_push, \
+             patch("app.core.nodes.gates.git_command", return_value=""), \
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings(auto_create_pr=False)):
             mock_push.invoke = MagicMock(return_value="pushed")
             result = nodes.committer_node(state)
 
@@ -552,9 +552,9 @@ class TestCommitterNodePR:
 
         state = self._make_committer_state(n_items=1, repo_ref="")
 
-        with patch.object(nodes, "git_commit_and_push") as mock_push, \
-             patch.object(nodes, "git_command", return_value=""), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+        with patch("app.core.nodes.committer.git_commit_and_push") as mock_push, \
+             patch("app.core.nodes.gates.git_command", return_value=""), \
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             mock_push.invoke = MagicMock(return_value="pushed")
             result = nodes.committer_node(state)
 
@@ -566,10 +566,10 @@ class TestCommitterNodePR:
 
         state = self._make_committer_state(n_items=1)
 
-        with patch.object(nodes, "git_commit_and_push") as mock_push, \
-             patch.object(nodes, "git_command", return_value=""), \
+        with patch("app.core.nodes.committer.git_commit_and_push") as mock_push, \
+             patch("app.core.nodes.gates.git_command", return_value=""), \
              patch("infra.factory.get_forge_client", side_effect=ForgeError("auth")), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+             patch("app.core.nodes.context_loader.get_settings", return_value=_mock_settings()):
             mock_push.invoke = MagicMock(return_value="pushed")
             result = nodes.committer_node(state)
 
@@ -596,8 +596,8 @@ class TestHumanGatePRHint:
             needs_human_approval=False,
         )
 
-        with patch.object(nodes, "git_command", return_value="M app/main.py"), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings(auto_create_pr=True)):
+        with patch("app.core.nodes.gates.git_command", return_value="M app/main.py"), \
+             patch("app.core.nodes.gates.get_settings", return_value=_mock_settings(auto_create_pr=True)):
             result = nodes.human_gate_node(state)
 
         payload = result.get("pending_approval", {})
@@ -615,8 +615,8 @@ class TestHumanGatePRHint:
             needs_human_approval=False,
         )
 
-        with patch.object(nodes, "git_command", return_value="M app/main.py"), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings(auto_create_pr=False)):
+        with patch("app.core.nodes.gates.git_command", return_value="M app/main.py"), \
+             patch("app.core.nodes.gates.get_settings", return_value=_mock_settings(auto_create_pr=False)):
             result = nodes.human_gate_node(state)
 
         payload = result.get("pending_approval", {})
@@ -634,8 +634,8 @@ class TestHumanGatePRHint:
             needs_human_approval=False,
         )
 
-        with patch.object(nodes, "git_command", return_value="M app/main.py"), \
-             patch("app.core.nodes.get_settings", return_value=_mock_settings()):
+        with patch("app.core.nodes.gates.git_command", return_value="M app/main.py"), \
+             patch("app.core.nodes.gates.get_settings", return_value=_mock_settings()):
             result = nodes.human_gate_node(state)
 
         payload = result.get("pending_approval", {})

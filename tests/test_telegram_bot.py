@@ -344,9 +344,9 @@ class TestIssueLoadedEventPlatform:
     def test_issue_loaded_event_contains_platform(self):
         """_hydrate_issue must emit issue_loaded with a platform field."""
         import re
-        nodes_src = open("app/core/nodes.py").read()
+        nodes_src = open("app/core/nodes/context_loader.py").read()
         idx = nodes_src.find('title="issue_loaded"')
-        assert idx != -1, "issue_loaded event not found in nodes.py"
+        assert idx != -1, "issue_loaded event not found in context_loader.py"
         # Find the metadata block following this title
         meta_start = nodes_src.find("metadata={", idx)
         meta_end = nodes_src.find("},", meta_start) + 2
