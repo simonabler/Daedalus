@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import platform
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
