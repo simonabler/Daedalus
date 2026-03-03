@@ -32,6 +32,7 @@ from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
 from app.core.task_routing import (
     classify_task_type,
     history_summary,
+    is_programming_request,
     record_agent_outcome,
     select_agent_thompson,
 )
@@ -62,6 +63,7 @@ from ._context_format import (
 )
 from .router import _answer_question_directly, _classify_request_intent
 from .resume import _resume_from_saved_todo
+from .committer import _extract_commit_message
 
 logger = get_logger("core.nodes.planner")
 
