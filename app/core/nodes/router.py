@@ -54,8 +54,39 @@ def _classify_request_intent(user_request: str) -> str:
         "what ",
         "why ",
         "how ",
+        "wo ",
+        "wer ",
+        "an was ",
+        "woran ",
+        "who ",
+        "where ",
+        "which ",
+        "show ",
+        "zeig ",
+        "kannst du ",
+        "can you ",
+        "tell me ",
+        "sag mir ",
+        "explain ",
+        "erkläre ",
+        "beschreibe ",
     )
-    looks_like_question = text.endswith("?") or any(text.startswith(prefix) for prefix in question_starters)
+    # Also catch questions that don't start with a question word
+    question_contains = (
+        "arbeitest du",
+        "machst du",
+        "tust du",
+        "doing right now",
+        "working on",
+        "plan?",
+        "status?",
+        "fortschritt?",
+    )
+    looks_like_question = (
+        text.endswith("?")
+        or any(text.startswith(prefix) for prefix in question_starters)
+        or any(marker in text for marker in question_contains)
+    )
 
     if looks_like_question and not is_programming_request(text):
         return "question_only"
@@ -89,7 +120,33 @@ def _heuristic_router_intent(user_request: str) -> str | None:
         "fortschritt",
         "current state",
         "aktueller stand",
+        "aktuelle stand",
+        "aktuellen stand",
         "wo stehen wir",
+        "woran arbeitest",
+        "an was arbeitest",
+        "was machst du",
+        "was tust du",
+        "what are you doing",
+        "what are you working",
+        "what's the status",
+        "what is the status",
+        "show me the plan",
+        "zeig den plan",
+        "zeig mir den plan",
+        "plan anzeigen",
+        "was ist der plan",
+        "what's the plan",
+        "show progress",
+        "show todo",
+        "zeig todo",
+        "todo list",
+        "task list",
+        "aufgabenliste",
+        "wie weit bist",
+        "how far are you",
+        "wie ist der stand",
+        "was ist der stand",
     )
     if any(marker in text for marker in status_markers):
         return "status"
@@ -244,7 +301,7 @@ def router_node(state: GraphState) -> dict:
         emit_node_end("planner", "Router", f"LLM intent: {llm_intent} (confidence={confidence:.2f})")
         return {"input_intent": llm_intent, "repo_ref": repo_ref, "issue_ref": None}
 
-    fallback = "code" if is_programming_request(state.user_request or "") else "research"
+    fallback = "code" if is_programming_request(state.user_request or "") else "status"
     emit_status(
         "planner",
         f"Router fallback intent: {fallback} (LLM output not parseable JSON)",
