@@ -1,6 +1,8 @@
 """Status node — quick responses to status/progress queries."""
 from __future__ import annotations
 
+from langchain_core.messages import HumanMessage
+
 from app.core.events import emit_agent_response, emit_node_end, emit_node_start, emit_status
 from app.core.logging import get_logger
 from app.core.state import GraphState, ItemStatus, WorkflowPhase
