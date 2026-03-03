@@ -365,7 +365,8 @@ def emit_approval_needed(pending: dict) -> None:
     """Emit when the human gate fires and the UI must show an approve/reject panel.
 
     ``pending`` is the full ``pending_approval`` dict from GraphState, which
-    contains: summary, files, triggers, diff_preview, git_status, timestamp.
+    contains: summary, files, triggers, diff_preview, git_status, timestamp,
+    branch, will_create_pr.
     """
     emit(WorkflowEvent(
         category=EventCategory.APPROVAL_NEEDED,
@@ -377,7 +378,10 @@ def emit_approval_needed(pending: dict) -> None:
             "files": pending.get("files", []),
             "triggers": pending.get("triggers", []),
             "git_status": pending.get("git_status", ""),
+            "diff_preview": pending.get("diff_preview", ""),
             "timestamp": pending.get("timestamp", ""),
+            "branch": pending.get("branch", ""),
+            "will_create_pr": pending.get("will_create_pr", False),
         },
     ))
 

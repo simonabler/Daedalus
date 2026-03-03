@@ -244,18 +244,44 @@ async def _process_tasks():
             # the shared registry so the Telegram bot can also resolve it.
             if final_state.needs_human_approval:
                 _register_pending_approval(final_state, repo)
+                # Re-emit approval_needed to guarantee the UI receives it
+                # (the in-graph emit may have been lost due to thread scheduling)
+                from app.core.events import emit_approval_needed as _emit_an
+                _emit_an(final_state.pending_approval or {})
 
             # If the workflow halted waiting for a coder answer, register the
             # question in the shared registry so Telegram can answer it too.
             if final_state.needs_coder_answer:
                 _register_pending_question(final_state, repo)
 
-            await _broadcast_raw("status", {
+            # If the workflow halted waiting for plan approval, re-emit so UI
+            # shows the plan panel even if the in-graph event was delayed.
+            if final_state.needs_plan_approval and final_state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL:
+                emit_plan_approval_needed("planner", "", final_state.todo_items or [])
+
+            status_payload = {
                 "phase": final_state.phase.value,
                 "completed": final_state.completed_items,
                 "total": len(final_state.todo_items),
                 "branch": final_state.branch_name,
-            })
+            }
+            # Include approval metadata in status broadcast so the UI can
+            # render the panel even if the dedicated event was missed.
+            if final_state.needs_human_approval and final_state.pending_approval:
+                status_payload["needs_human_approval"] = True
+                status_payload["pending_approval"] = final_state.pending_approval
+            if final_state.needs_plan_approval:
+                status_payload["needs_plan_approval"] = True
+                status_payload["pending_plan_items"] = [
+                    {
+                        "id": getattr(i, "id", ""),
+                        "description": getattr(i, "description", ""),
+                        "task_type": getattr(i, "task_type", "coding"),
+                        "assigned_agent": getattr(i, "assigned_agent", "") or "",
+                    }
+                    for i in (final_state.todo_items or [])
+                ]
+            await _broadcast_raw("status", status_payload)
 
         except Exception as e:
             logger.error("Task failed: %s", e, exc_info=True)
