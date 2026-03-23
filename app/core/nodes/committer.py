@@ -4,6 +4,7 @@ from __future__ import annotations
 import platform
 import re
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import get_settings
@@ -18,7 +19,7 @@ from app.core.events import (
 )
 from app.core.memory import get_memory_stats
 from app.core.logging import get_logger
-from app.core.state import GraphState, ItemStatus, WorkflowPhase
+from app.core.state import CoderDecision, GraphState, ItemStatus, WorkflowPhase
 from app.tools.git import git_command, git_commit_and_push
 
 from ._helpers import (
@@ -256,6 +257,21 @@ def committer_node(state: GraphState) -> dict:
             f"{next_item.description} -> {_coder_label(next_coder)}",
             **_progress_meta(state, "coding"),
         )
+        # STRAT-DC-003: log the coder-assignment decision for the item advance.
+        _advance_decision = CoderDecision(
+            trigger="item_advance",
+            from_coder=state.active_coder,
+            to_coder=next_coder,
+            item_id=next_item.id,
+            iteration=0,
+            rework_cycle=0,
+            timestamp=datetime.now(UTC).isoformat(),
+            reason=f"Committed item {state.current_item_index + 1}, advancing to item {next_index + 1}",
+        )
+        logger.info(
+            "CoderDecision | trigger=item_advance | %s → %s | next_item=%s",
+            state.active_coder, next_coder, next_item.id,
+        )
         return {
             "current_item_index": next_index,
             "phase": WorkflowPhase.CODING,
@@ -266,6 +282,7 @@ def committer_node(state: GraphState) -> dict:
             "needs_human_approval": False,
             "pending_approval": {},
             "stop_reason": "",
+            "coder_decision_log": list(state.coder_decision_log) + [_advance_decision],
         }
     else:
         # Log final memory stats

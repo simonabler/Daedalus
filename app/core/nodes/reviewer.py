@@ -16,7 +16,7 @@ from app.core.events import (
 )
 from app.core.logging import get_logger
 from app.core.memory import LEARNING_EXTRACTION_PROMPT, append_memory
-from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
+from app.core.state import CoderOutput, GraphState, ItemStatus, TodoItem, WorkflowPhase
 from app.core.config import get_settings
 from app.core.task_routing import record_agent_outcome
 from app.core.token_budget import BudgetExceededException
@@ -199,11 +199,20 @@ def peer_review_node(state: GraphState) -> dict:
 
     emit_node_end(reviewer, "Peer Review", f"Verdict: {verdict}")
 
+    # STRAT-SI-007: stamp the verdict back onto the last CoderOutput so the
+    # full pass (implementation + review outcome) is traceable in one record.
+    updated_output_log = list(state.agent_output_log)
+    if updated_output_log:
+        updated_output_log[-1] = updated_output_log[-1].model_copy(
+            update={"verdict": verdict}
+        )
+
     return {
         "peer_review_verdict": verdict,
         "peer_review_notes": result,
         "phase": phase,
         "convergence_detected": verdict == "ESCALATE_CONVERGENCE",
+        "agent_output_log": updated_output_log,
         **budget_update,
     }
 
