@@ -286,10 +286,22 @@ def planner_plan_node(state: GraphState) -> dict:
         "If this is a programming request, provide a step-by-step TODO plan."
     )
 
-    result, budget_update = _invoke_with_budget(
-        state, "planner", [HumanMessage(content=prompt)],
-        tools=PLANNER_TOOLS, inject_memory=False, node="planner",
-    )
+    try:
+        result, budget_update = _invoke_with_budget(
+            state, "planner", [HumanMessage(content=prompt)],
+            tools=PLANNER_TOOLS, inject_memory=False, node="planner",
+        )
+    except BudgetExceededException:
+        return {"phase": WorkflowPhase.STOPPED, "stop_reason": "budget_hard_limit_exceeded"}
+    except Exception as exc:
+        error_msg = f"Planner LLM invocation failed: {exc}"
+        logger.error(error_msg)
+        emit_error("planner", error_msg)
+        return {
+            "error_message": error_msg,
+            "phase": WorkflowPhase.STOPPED,
+            "stop_reason": "planner_llm_failure",
+        }
     items = _parse_plan_from_result(result)
 
     if not items and is_programming_request(state.user_request):

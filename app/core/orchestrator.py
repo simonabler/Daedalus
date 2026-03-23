@@ -29,12 +29,45 @@ from app.core.nodes import (
     router_node,
     status_node,
     tester_node,
+    validate_node,
+    error_handler_node,
 )
 from app.core.state import GraphState, WorkflowPhase
 
 logger = get_logger("core.orchestrator")
 
 _shutdown_event = threading.Event()
+
+
+# ---------------------------------------------------------------------------
+# Validation node factory
+# ---------------------------------------------------------------------------
+
+def _make_validate_node(contract: str):
+    """Return a LangGraph node function that enforces *contract* at a handoff.
+
+    The factory injects ``validation_contract`` into state so that the generic
+    ``validate_node`` knows which set of checks to run, without requiring a
+    separate node class per handoff point.
+    """
+    def _validate(state: GraphState) -> dict:
+        # Inject the contract name, then delegate to the generic validator.
+        patched_state = state.model_copy(update={"validation_contract": contract})
+        return validate_node(patched_state)
+    _validate.__name__ = f"validate_{contract}"
+    return _validate
+
+
+def _route_after_validate(next_node: str):
+    """Return a routing function that goes to *next_node* on pass, error_handler on fail."""
+    def _route(state: GraphState) -> str:
+        if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
+            return "error_handler"
+        if state.validation_passed:
+            return next_node
+        return "error_handler"
+    _route.__name__ = f"_route_after_validate_to_{next_node}"
+    return _route
 
 
 def request_shutdown() -> None:
@@ -59,7 +92,7 @@ def _route_after_plan(state: GraphState) -> str:
         return "stopped"
     if state.needs_plan_approval:
         return "plan_approval_gate"
-    return "coder"
+    return "validate_planner_to_coder"
 
 
 def _route_after_plan_approval_gate(state: GraphState) -> str:
@@ -69,7 +102,7 @@ def _route_after_plan_approval_gate(state: GraphState) -> str:
         return "stopped"    # graph halts; /api/plan-approve queues resume
     if state.phase == WorkflowPhase.PLANNING:
         return "planner"    # revision requested — one more planning round
-    return "coder"          # approved, proceed to coding
+    return "validate_planner_to_coder"  # approved, validate then proceed to coding
 
 
 def route_after_router(state: GraphState) -> str:
@@ -121,12 +154,11 @@ def _route_after_coder(state: GraphState) -> str:
         return "stopped"
     if state.phase == WorkflowPhase.WAITING_FOR_ANSWER:
         return "answer_gate"
-    # Env-fix items (ops tasks prepended by planner_env_fix) skip peer review
-    # and go straight back to tester so the fix can be verified immediately.
+    # Env-fix items skip peer review and go straight back to tester
     current = state.current_item
     if current is not None and current.task_type == "ops" and current.id.startswith("env_fix_"):
         return "tester"
-    return "peer_review"
+    return "validate_coder_to_peer_review"
 
 
 def _route_after_answer_gate(state: GraphState) -> str:
@@ -140,7 +172,7 @@ def _route_after_answer_gate(state: GraphState) -> str:
 def _route_after_peer_review(state: GraphState) -> str:
     if _shutdown_event.is_set() or state.phase == WorkflowPhase.STOPPED:
         return "stopped"
-    return "learn"
+    return "validate_peer_review_to_learn"
 
 
 def _route_after_learn(state: GraphState) -> str:
@@ -169,7 +201,7 @@ def _route_after_tester(state: GraphState) -> str:
         return "env_fix"
     if state.phase == WorkflowPhase.CODING:
         return "coder"
-    return "decide"
+    return "validate_tester_to_decide"
 
 
 def _route_after_env_fix(state: GraphState) -> str:
@@ -236,6 +268,13 @@ def build_graph() -> StateGraph:
     graph.add_node("documenter", documenter_node)
     graph.add_node("env_fix", planner_env_fix_node)
 
+    # Validation guard nodes — one per major handoff point
+    graph.add_node("validate_planner_to_coder",       _make_validate_node("planner_to_coder"))
+    graph.add_node("validate_coder_to_peer_review",   _make_validate_node("coder_to_peer_review"))
+    graph.add_node("validate_peer_review_to_learn",   _make_validate_node("peer_review_to_learn"))
+    graph.add_node("validate_tester_to_decide",       _make_validate_node("tester_to_decide"))
+    graph.add_node("error_handler", error_handler_node)
+
     graph.set_entry_point("router")
 
     graph.add_conditional_edges(
@@ -256,24 +295,48 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "planner",
         _route_after_plan,
-        {"plan_approval_gate": "plan_approval_gate", "coder": "coder", "stopped": END},
+        {"plan_approval_gate": "plan_approval_gate", "validate_planner_to_coder": "validate_planner_to_coder", "stopped": END},
     )
     graph.add_conditional_edges(
         "plan_approval_gate",
         _route_after_plan_approval_gate,
-        {"planner": "planner", "coder": "coder", "stopped": END},
+        {"planner": "planner", "validate_planner_to_coder": "validate_planner_to_coder", "stopped": END},
     )
+
+    # Validation edges — each validate node routes to next node or error_handler
+    graph.add_conditional_edges(
+        "validate_planner_to_coder",
+        _route_after_validate("coder"),
+        {"coder": "coder", "error_handler": "error_handler"},
+    )
+    graph.add_conditional_edges(
+        "validate_coder_to_peer_review",
+        _route_after_validate("peer_review"),
+        {"peer_review": "peer_review", "error_handler": "error_handler"},
+    )
+    graph.add_conditional_edges(
+        "validate_peer_review_to_learn",
+        _route_after_validate("learn"),
+        {"learn": "learn", "error_handler": "error_handler"},
+    )
+    graph.add_conditional_edges(
+        "validate_tester_to_decide",
+        _route_after_validate("decide"),
+        {"decide": "decide", "error_handler": "error_handler"},
+    )
+    graph.add_edge("error_handler", END)
+
     graph.add_conditional_edges(
         "coder",
         _route_after_coder,
-        {"answer_gate": "answer_gate", "peer_review": "peer_review", "tester": "tester", "stopped": END},
+        {"answer_gate": "answer_gate", "validate_coder_to_peer_review": "validate_coder_to_peer_review", "tester": "tester", "stopped": END},
     )
     graph.add_conditional_edges(
         "answer_gate",
         _route_after_answer_gate,
         {"coder": "coder", "stopped": END},
     )
-    graph.add_conditional_edges("peer_review", _route_after_peer_review, {"learn": "learn", "stopped": END})
+    graph.add_conditional_edges("peer_review", _route_after_peer_review, {"validate_peer_review_to_learn": "validate_peer_review_to_learn", "stopped": END})
     graph.add_conditional_edges(
         "learn",
         _route_after_learn,
@@ -287,7 +350,7 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "tester",
         _route_after_tester,
-        {"decide": "decide", "coder": "coder", "env_fix": "env_fix", "stopped": END},
+        {"validate_tester_to_decide": "validate_tester_to_decide", "coder": "coder", "env_fix": "env_fix", "stopped": END},
     )
     graph.add_conditional_edges(
         "env_fix", _route_after_env_fix, {"coder": "coder", "stopped": END}

@@ -316,7 +316,7 @@ def test_route_after_plan_goes_to_gate_when_needs_approval():
 
 def test_route_after_plan_goes_to_coder_when_no_approval_needed():
     state = _state(needs_plan_approval=False, todo_items=[_make_item()])
-    assert _route_after_plan(state) == "coder"
+    assert _route_after_plan(state) == "validate_planner_to_coder"
 
 
 def test_route_after_plan_goes_to_stopped_when_no_items():
@@ -336,7 +336,7 @@ def test_route_after_plan_approval_gate_planner_when_revision():
 
 def test_route_after_plan_approval_gate_coder_when_approved():
     state = _state(phase=WorkflowPhase.CODING)
-    assert _route_after_plan_approval_gate(state) == "coder"
+    assert _route_after_plan_approval_gate(state) == "validate_planner_to_coder"
 
 
 def test_route_after_resume_goes_to_gate_when_waiting_for_plan():

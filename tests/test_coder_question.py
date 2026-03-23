@@ -171,7 +171,7 @@ class TestOrchestratorRouting:
         from app.core.state import GraphState, WorkflowPhase
 
         state = GraphState(user_request="test", phase=WorkflowPhase.PEER_REVIEWING)
-        assert _route_after_coder(state) == "peer_review"
+        assert _route_after_coder(state) == "validate_coder_to_peer_review"
 
     def test_route_after_answer_gate_stopped(self):
         from app.core.orchestrator import _route_after_answer_gate

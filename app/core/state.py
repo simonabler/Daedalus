@@ -154,6 +154,12 @@ class GraphState(BaseModel):
     error_message: str = ""
     convergence_detected: bool = False  # True when diff-delta convergence exit was triggered
 
+    # ── Validation / error propagation ────────────────────────────────
+    # Set by validate_node before each handoff; cleared after passing.
+    validation_contract: str = ""        # which contract to enforce (e.g. "planner_to_coder")
+    validation_passed: bool = False      # True after a successful validation
+    validation_failures: list[dict[str, str]] = Field(default_factory=list)  # [{rule, message}]
+
     # ── Messages (for LangGraph message passing) ──────────────────────
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
 

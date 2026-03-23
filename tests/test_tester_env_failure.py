@@ -329,7 +329,7 @@ class TestEnvFixOrchestration:
     def test_tester_routes_to_decide_on_deciding_phase(self):
         from app.core.orchestrator import _route_after_tester
         state = _make_state(phase=WorkflowPhase.DECIDING)
-        assert _route_after_tester(state) == "decide"
+        assert _route_after_tester(state) == "validate_tester_to_decide"
 
     def test_tester_routes_to_coder_on_coding_phase(self):
         from app.core.orchestrator import _route_after_tester
@@ -370,7 +370,7 @@ class TestEnvFixOrchestration:
             todo_items=[normal_item],
             current_item_index=0,
         )
-        assert _route_after_coder(state) == "peer_review"
+        assert _route_after_coder(state) == "validate_coder_to_peer_review"
 
     def test_graph_contains_env_fix_node(self):
         from app.core.orchestrator import build_graph

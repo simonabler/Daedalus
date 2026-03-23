@@ -25,6 +25,7 @@ from .documenter import documenter_node  # noqa: F401
 from .status import status_node  # noqa: F401
 from .research import research_node  # noqa: F401
 from .resume import resume_node  # noqa: F401
+from .validation import error_handler_node, validate_node  # noqa: F401
 
 # -- Helpers re-exported for test & orchestrator compatibility -------------
 
@@ -150,6 +151,8 @@ __all__ = [
     "router_node",
     "status_node",
     "tester_node",
+    "validate_node",
+    "error_handler_node",
     # Tool sets
     "CODER_TOOLS",
     "DOCUMENTER_TOOLS",
