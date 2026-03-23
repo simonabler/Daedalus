@@ -279,9 +279,9 @@ class TestInvokeAgentStreaming:
         captured: list = []
         subscribe_sync(captured.append)
 
-        with patch("app.core.nodes.get_llm", return_value=fake_llm), \
-             patch("app.core.nodes.load_system_prompt", return_value="sys"), \
-             patch("app.core.nodes.load_all_memory", return_value=""):
+        with patch("app.core.nodes._helpers.get_llm", return_value=fake_llm), \
+             patch("app.core.nodes._helpers.load_system_prompt", return_value="sys"), \
+             patch("app.core.nodes.planner.load_all_memory", return_value=""):
             try:
                 result = _invoke_agent(role, [HumanMessage(content="task")])
             finally:

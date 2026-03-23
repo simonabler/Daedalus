@@ -107,8 +107,8 @@ class TestDocumenterNodeNoOp:
 
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = diff_output
             result = documenter_node(state)
             clear_listeners()
@@ -131,8 +131,8 @@ class TestDocumenterNodeNoOp:
         from app.core.events import clear_listeners
 
         state = GraphState(phase=WorkflowPhase.CODING)
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.side_effect = RuntimeError("git error")
             result = documenter_node(state)
             clear_listeners()
@@ -153,8 +153,8 @@ class TestDocumenterNodeLLMPath:
         diff = "+def new_public_api(x: int) -> str:\n+    return str(x)\n"
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = diff
             mock_llm.return_value = "CHANGED FILES:\n- CHANGELOG.md: added entry\n"
             result = documenter_node(state)
@@ -170,8 +170,8 @@ class TestDocumenterNodeLLMPath:
         diff = "+class NewFeature:\n+    pass\n"
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = diff
             mock_llm.return_value = "done"
             documenter_node(state)
@@ -187,8 +187,8 @@ class TestDocumenterNodeLLMPath:
         diff = "+@app.get('/health')\n+def health():\n+    return {'ok': True}\n"
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = diff
             mock_llm.return_value = "done"
             documenter_node(state)
@@ -206,8 +206,8 @@ class TestDocumenterNodeLLMPath:
         long_diff = "+def new_func():\n" + ("+    x = 1\n" * 900)
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = long_diff
             mock_llm.return_value = "done"
             documenter_node(state)
@@ -228,8 +228,8 @@ class TestDocumenterNodeLLMPath:
         diff = "+def public_fn():\n    pass\n"
         state = GraphState(phase=WorkflowPhase.CODING)
 
-        with patch("app.core.nodes.git_command") as mock_git, \
-             patch("app.core.nodes._invoke_agent") as mock_llm:
+        with patch("app.core.nodes.documenter.git_command") as mock_git, \
+             patch("app.core.nodes._helpers._invoke_agent") as mock_llm:
             mock_git.invoke.return_value = diff
             mock_llm.return_value = "done"
             result = documenter_node(state)

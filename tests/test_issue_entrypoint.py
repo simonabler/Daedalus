@@ -432,7 +432,7 @@ class TestContextLoaderIssueHydration:
         from app.core.state import IssueRef
 
         (tmp_path / "README.md").write_text("# Hello")
-        monkeypatch.setattr(nodes, "get_settings", lambda: self._make_settings(tmp_path))
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings", lambda: self._make_settings(tmp_path))
 
         issue_ref = IssueRef(repo_ref="owner/repo", issue_id=42, platform="github")
         state = GraphState(
@@ -464,7 +464,7 @@ class TestContextLoaderIssueHydration:
         from app.core import nodes
 
         (tmp_path / "README.md").write_text("# Hello")
-        monkeypatch.setattr(nodes, "get_settings", lambda: self._make_settings(tmp_path))
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings", lambda: self._make_settings(tmp_path))
 
         state = GraphState(
             user_request="add health endpoint",
@@ -481,7 +481,7 @@ class TestContextLoaderIssueHydration:
         from infra.forge import ForgeError
 
         (tmp_path / "README.md").write_text("# Hello")
-        monkeypatch.setattr(nodes, "get_settings", lambda: self._make_settings(tmp_path))
+        monkeypatch.setattr("app.core.nodes.context_loader.get_settings", lambda: self._make_settings(tmp_path))
 
         issue_ref = IssueRef(repo_ref="owner/repo", issue_id=42)
         state = GraphState(

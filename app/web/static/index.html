@@ -1553,7 +1553,11 @@ function handleEvent(evt) {
           _onIntelligenceComplete();
         }
         if (metadata.phase === 'waiting_for_approval' && !hasApprovalPanel()) {
-          scheduleRestoreApprovalPanel('status_event');
+          if (metadata.needs_human_approval && metadata.pending_approval) {
+            showApprovalPanel(metadata.pending_approval);
+          } else {
+            scheduleRestoreApprovalPanel('status_event');
+          }
         }
         if (metadata.phase === 'waiting_for_plan_approval' && !hasPlanApprovalPanel()) {
           if (metadata.needs_plan_approval && Array.isArray(metadata.pending_plan_items)) {

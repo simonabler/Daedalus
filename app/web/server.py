@@ -21,11 +21,11 @@ from pydantic import BaseModel
 from app.core.checkpoints import checkpoint_manager
 from app.core.config import get_settings
 from app.core.events import WorkflowEvent, get_history, set_event_loop, subscribe_async
-from app.core.events import emit_approval_done
+from app.core.events import emit_approval_done, emit_plan_approval_needed
 from app.core.approval_registry import registry as approval_registry
 from app.core.logging import get_logger
 from app.core.orchestrator import request_shutdown, reset_shutdown, run_workflow
-from app.core.state import GraphState, WorkflowPhase
+from app.core.state import GraphState, ItemStatus, WorkflowPhase
 
 logger = get_logger("web.server")
 
@@ -134,6 +134,18 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
             "compressed_count":  compressed_count,
         }
 
+    # Update _current_state with intelligence data mid-workflow so
+    # /api/intelligence-summary works before the workflow completes.
+    if (event.metadata and event.metadata.get("type") == "intelligence_complete"
+            and _current_state is not None):
+        meta = event.metadata
+        _current_state.static_issues = meta.get("_intel_static_issues", [])
+        _current_state.code_smells = meta.get("_intel_code_smells", [])
+        _current_state.call_graph = meta.get("_intel_call_graph", {})
+        _current_state.dependency_graph = meta.get("_intel_dependency_graph", {})
+        _current_state.intelligence_cache_key = meta.get("_intel_cache_key", "")
+        _current_state.intelligence_cached = meta.get("_intel_cached", False)
+
     # Track cumulative token spend in _current_state so /api/status reflects
     # live costs even while the workflow is still running (not just at end).
     if event.category.value == "token_usage" and event.metadata and _current_state is not None:
@@ -145,7 +157,7 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
         )
         # Keep per_agent breakdown up-to-date
         per_agent = budget.setdefault("per_agent", {})
-        agent = meta.get("agent") or meta.get("asked_by", "unknown")
+        agent = event.agent or meta.get("agent") or meta.get("asked_by", "unknown")
         if agent not in per_agent:
             per_agent[agent] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
                                 "total_tokens": 0, "cost_usd": 0.0}
@@ -156,6 +168,17 @@ async def _broadcast_event(event: WorkflowEvent) -> None:
         entry["total_tokens"]      += meta.get("total_tokens", 0)
         entry["cost_usd"]           = round(entry["cost_usd"] + meta.get("cost_usd", 0.0), 6)
         _current_state.token_budget = budget
+
+        # Enrich the event payload with accumulated budget data so the UI
+        # can render the full cost breakdown without extra API calls.
+        event.metadata["total_cost_usd"] = budget["total_cost_usd"]
+        event.metadata["total_tokens"]   = budget["total_tokens"]
+        event.metadata["per_agent"]      = per_agent
+        settings = get_settings()
+        event.metadata["soft_limit_usd"] = settings.token_budget_soft_limit_usd
+        event.metadata["hard_limit_usd"] = settings.token_budget_hard_limit_usd
+        event.metadata["soft_limit_hit"] = budget["total_cost_usd"] >= settings.token_budget_soft_limit_usd > 0
+        event.metadata["hard_limit_hit"] = budget["total_cost_usd"] >= settings.token_budget_hard_limit_usd > 0
 
     payload = event.to_dict()
     message = json.dumps({"type": "event", "data": payload})
@@ -221,18 +244,44 @@ async def _process_tasks():
             # the shared registry so the Telegram bot can also resolve it.
             if final_state.needs_human_approval:
                 _register_pending_approval(final_state, repo)
+                # Re-emit approval_needed to guarantee the UI receives it
+                # (the in-graph emit may have been lost due to thread scheduling)
+                from app.core.events import emit_approval_needed as _emit_an
+                _emit_an(final_state.pending_approval or {})
 
             # If the workflow halted waiting for a coder answer, register the
             # question in the shared registry so Telegram can answer it too.
             if final_state.needs_coder_answer:
                 _register_pending_question(final_state, repo)
 
-            await _broadcast_raw("status", {
+            # If the workflow halted waiting for plan approval, re-emit so UI
+            # shows the plan panel even if the in-graph event was delayed.
+            if final_state.needs_plan_approval and final_state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL:
+                emit_plan_approval_needed("planner", "", final_state.todo_items or [])
+
+            status_payload = {
                 "phase": final_state.phase.value,
                 "completed": final_state.completed_items,
                 "total": len(final_state.todo_items),
                 "branch": final_state.branch_name,
-            })
+            }
+            # Include approval metadata in status broadcast so the UI can
+            # render the panel even if the dedicated event was missed.
+            if final_state.needs_human_approval and final_state.pending_approval:
+                status_payload["needs_human_approval"] = True
+                status_payload["pending_approval"] = final_state.pending_approval
+            if final_state.needs_plan_approval:
+                status_payload["needs_plan_approval"] = True
+                status_payload["pending_plan_items"] = [
+                    {
+                        "id": getattr(i, "id", ""),
+                        "description": getattr(i, "description", ""),
+                        "task_type": getattr(i, "task_type", "coding"),
+                        "assigned_agent": getattr(i, "assigned_agent", "") or "",
+                    }
+                    for i in (final_state.todo_items or [])
+                ]
+            await _broadcast_raw("status", status_payload)
 
         except Exception as e:
             logger.error("Task failed: %s", e, exc_info=True)
@@ -382,6 +431,58 @@ app.mount("/images", StaticFiles(directory=Path(__file__).resolve().parents[2] /
 
 @app.post("/api/task")
 async def submit_task(req: TaskRequest):
+    # ── Intercept: if we're waiting for plan approval, treat the user's
+    # chat message as a plan interaction instead of a new task. ─────────
+    if (isinstance(_current_state, GraphState)
+            and _current_state.needs_plan_approval
+            and _current_state.phase == WorkflowPhase.WAITING_FOR_PLAN_APPROVAL):
+        text = req.task.strip().lower()
+
+        # "go" / "start" / "los" → approve the plan
+        go_markers = {"go", "los", "start", "approve", "ok", "lgtm", "ja", "yes",
+                      "passt", "approved", "ship it", "mach", "do it", "run"}
+        if text in go_markers or text.rstrip("!") in go_markers:
+            return await plan_approve(PlanApproveRequest(approved=True, feedback=""))
+
+        # "cancel" / "stop" / "abbrechen" → reject plan
+        cancel_markers = {"cancel", "stop", "abbrechen", "nein", "no", "abort"}
+        if text in cancel_markers:
+            return await plan_approve(PlanApproveRequest(approved=False))
+
+        # "show plan" / "zeig plan" → re-emit the plan for display
+        show_markers = ("show plan", "zeig plan", "zeig den plan", "show me the plan",
+                        "plan anzeigen", "was ist der plan", "what's the plan",
+                        "plan?", "plan")
+        if text in show_markers or text.startswith("zeig") and "plan" in text:
+            plan_items = _current_state.todo_items or []
+            plan_summary = ""
+            if plan_items:
+                lines = []
+                for idx, item in enumerate(plan_items, 1):
+                    mark = "x" if item.status == ItemStatus.DONE else " "
+                    lines.append(f"  {idx}. [{mark}] ({item.task_type}) {item.description}")
+                plan_summary = "\n".join(lines)
+            pending_items = [
+                {
+                    "id": getattr(i, "id", ""),
+                    "description": getattr(i, "description", ""),
+                    "task_type": getattr(i, "task_type", "coding"),
+                    "assigned_agent": getattr(i, "assigned_agent", "") or "",
+                }
+                for i in plan_items
+            ]
+            emit_plan_approval_needed("planner", plan_summary, plan_items)
+            await _broadcast_raw("status", {
+                "phase": "waiting_for_plan_approval",
+                "needs_plan_approval": True,
+                "pending_plan_items": pending_items,
+                "plan_summary": plan_summary,
+            })
+            return {"status": "plan_displayed", "items_count": len(plan_items)}
+
+        # Anything else → treat as revision feedback
+        return await plan_approve(PlanApproveRequest(approved=True, feedback=req.task.strip()))
+
     await _task_queue.put(req)
     return {"status": "queued", "task": req.task, "queue_size": _task_queue.qsize()}
 

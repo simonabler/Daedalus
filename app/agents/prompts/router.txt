@@ -30,19 +30,24 @@ Use `code` when the request:
 - "Implement rate limiting for the API"
 - "Explain why the auth is broken and fix it" ← fix = code
 - "The tests are failing, please fix them"
-- "Add error handling to the file upload function"
+- "Behebe den Bug im Login" (German: fix the login bug)
+- "Implementiere eine neue API-Route" (German: implement new route)
 
 ---
 
 ### `status`
-The user wants to KNOW the current state of the workflow or repository.
-No file changes. Pure information retrieval.
+The user wants to KNOW the current state of the workflow, the plan,
+or what the agent is currently doing.  No file changes.  Pure
+information retrieval and conversational answers.
 
 Use `status` when the request:
 - Asks what is currently happening or what was done
 - Asks about progress on a task
 - Requests a summary of recent changes
 - Asks which TODO items are done or pending
+- **Asks the agent about itself** ("what are you doing?", "who are you?")
+- **Is a conversational question directed at the agent** (not at the code)
+- **Is a general/casual question that does NOT request file changes**
 
 **Examples → status:**
 - "What's the current status?"
@@ -50,8 +55,22 @@ Use `status` when the request:
 - "Show me the progress"
 - "Which items are still pending?"
 - "Where are we?"
-- "Was wurde bisher gemacht?" (German: "What has been done so far?")
-- "Wie ist der Fortschritt?" (German: "What is the progress?")
+- "What are you working on?"
+- "What are you doing right now?"
+- "Show me the plan"
+- "How far are you?"
+- "An was arbeitest du gerade?" (German: what are you working on?)
+- "Was machst du gerade?" (German: what are you doing right now?)
+- "Wie weit bist du?" (German: how far are you?)
+- "Zeig mir den Plan" (German: show me the plan)
+- "Was wurde bisher gemacht?" (German: what has been done?)
+- "Wie ist der Fortschritt?" (German: what is the progress?)
+- "Wo stehen wir?" (German: where are we?)
+- "Woran arbeitest du?" (German: what are you working on?)
+
+**KEY RULE:** If the user addresses the agent directly ("you"/"du") and
+asks about its current activity, plan, or progress → ALWAYS `status`.
+These are never coding requests.
 
 ---
 
@@ -60,7 +79,7 @@ The user wants READ-ONLY analysis or explanation of the existing code.
 No file changes. Exploration and explanation only.
 
 Use `research` when the request:
-- Asks to explain how something works in the codebase
+- Asks to explain how something works **in the codebase**
 - Asks to find where something is implemented
 - Asks to compare approaches without implementing anything
 - Asks for an analysis or audit without changes
@@ -73,7 +92,8 @@ Use `research` when the request:
 - "Find all places where we use deprecated functions"
 - "Why does the router use keyword matching?"
 - "Analyze the test coverage without making changes"
-- "Show me how the coder node works"
+- "Wie funktioniert der Login?" (German: how does the login work?)
+- "Erkläre mir die Architektur" (German: explain the architecture)
 
 **IMPORTANT:** If the user explains a problem AND asks to fix it, that is `code`, not `research`.
 "Explain why the auth is broken" → `research`
@@ -99,13 +119,18 @@ Use `resume` when the request:
 
 ---
 
-## Decision Rules
+## Decision Rules (in priority order)
 
-1. **When in doubt between `code` and `research`**: If file changes could result → `code`.
-2. **Bug reports without fix request** → `research` (unless user says "fix it").
-3. **Questions ending with "?"** → likely `research` or `status`, but check for implicit coding requests.
-4. **"Add", "create", "implement", "fix", "update", "write", "refactor"** → always `code`.
-5. **German requests**: Apply the same rules. "Implementiere", "Füge hinzu", "Behebe" → `code`.
+1. **Agent-directed questions** ("what are you doing?", "woran arbeitest du?",
+   "show me the plan") → `status`.  NEVER `code`.
+2. **Action verbs targeting the codebase** ("add", "create", "implement",
+   "fix", "update", "write", "refactor", "behebe", "implementiere") → `code`.
+3. **When in doubt between `code` and `research`**: If file changes could result → `code`.
+4. **When in doubt between `code` and `status`**: If no action verb is present
+   and the user is asking a question → `status`.
+5. **Bug reports without fix request** → `research` (unless user says "fix it").
+6. **Short conversational messages** ("hi", "thanks", "ok") → `status`.
+7. **German requests**: Apply the same rules using German keywords.
 
 ## Confidence Score
 
@@ -121,10 +146,16 @@ Use `resume` when the request:
 | "Add /api/health endpoint" | code | 0.98 | Clear feature addition |
 | "Fix the failing tests" | code | 0.97 | Explicit fix request |
 | "What's the status?" | status | 0.99 | Pure status query |
+| "What are you working on?" | status | 0.99 | Agent-directed question |
+| "An was arbeitest du?" | status | 0.99 | Agent-directed (German) |
+| "Zeig mir den Plan" | status | 0.98 | Asks to show plan |
 | "How does login work?" | research | 0.95 | Explanation, no change |
 | "resume" | resume | 1.0 | Exact keyword |
 | "Explain the bug and fix it" | code | 0.90 | Fix requested = code |
 | "Why are tests slow?" | research | 0.85 | Why = explain, no fix |
 | "Why are tests slow? Optimize them." | code | 0.95 | Optimize = code |
 | "Show progress on auth task" | status | 0.92 | Progress report |
+| "Was machst du gerade?" | status | 0.99 | Agent activity (German) |
+| "Wie weit bist du?" | status | 0.97 | Progress question (German) |
 | "Refactor and document the API" | code | 0.96 | Both result in changes |
+| "Erkläre die Architektur" | research | 0.95 | Explanation (German) |
