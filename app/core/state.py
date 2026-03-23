@@ -37,6 +37,7 @@ class TodoItem(BaseModel):
     rework_count: int = 0
     test_fail_count: int = 0
     coder_questions_asked: int = 0   # number of ask_human signals emitted for this item
+    last_coder_diff: str = ""        # git diff snapshot after previous coder pass (for convergence detection)
 
 
 class WorkflowPhase(StrEnum):
@@ -151,6 +152,7 @@ class GraphState(BaseModel):
     stop_reason: str = ""
     needs_replan: bool = False
     error_message: str = ""
+    convergence_detected: bool = False  # True when diff-delta convergence exit was triggered
 
     # ── Messages (for LangGraph message passing) ──────────────────────
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)

@@ -1,6 +1,7 @@
 """Reviewer nodes — peer review and learning extraction."""
 from __future__ import annotations
 
+import difflib
 import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,7 +16,7 @@ from app.core.events import (
 )
 from app.core.logging import get_logger
 from app.core.memory import LEARNING_EXTRACTION_PROMPT, append_memory
-from app.core.state import GraphState, ItemStatus, WorkflowPhase
+from app.core.state import GraphState, ItemStatus, TodoItem, WorkflowPhase
 from app.core.config import get_settings
 from app.core.task_routing import record_agent_outcome
 from app.core.token_budget import BudgetExceededException
@@ -32,6 +33,48 @@ from ._helpers import (
 from ._context_format import _format_intelligence_summary_reviewer
 
 logger = get_logger("core.nodes.reviewer")
+
+# ---------------------------------------------------------------------------
+# CONVERGENCE DETECTION
+# ---------------------------------------------------------------------------
+
+#: Similarity ratio above which two successive diffs are considered "not
+#: meaningfully different". At 0.97 the coder has changed less than ~3% of
+#: content since the last rework — further reviewer cycles will not help.
+_CONVERGENCE_SIMILARITY_THRESHOLD = 0.97
+
+#: Only activate convergence detection after this many rework cycles.
+#: On the very first rework the coder usually makes real progress, so we
+#: give it one free pass before comparing diffs.
+_CONVERGENCE_MIN_REWORK = 2
+
+
+def _check_convergence(item: "TodoItem", current_diff: str) -> bool:  # noqa: F821
+    """Return True when successive coder outputs are too similar to make progress.
+
+    Compares *current_diff* (the diff stored on the item after the latest coder
+    pass) against the diff from the *previous* pass that was stored at the start
+    of this rework cycle.  A SequenceMatcher ratio >= the threshold means the
+    coder is essentially resubmitting the same patch.
+
+    Convergence is only checked after ``_CONVERGENCE_MIN_REWORK`` cycles so
+    the coder always gets at least one genuine rework attempt.
+    """
+    if item.rework_count < _CONVERGENCE_MIN_REWORK:
+        return False
+    if not item.last_coder_diff or not current_diff:
+        return False
+    ratio = difflib.SequenceMatcher(
+        None, item.last_coder_diff, current_diff, autojunk=False
+    ).ratio()
+    logger.debug(
+        "Convergence check for %s: similarity=%.3f threshold=%.3f",
+        item.id,
+        ratio,
+        _CONVERGENCE_SIMILARITY_THRESHOLD,
+    )
+    return ratio >= _CONVERGENCE_SIMILARITY_THRESHOLD
+
 
 def peer_review_node(state: GraphState) -> dict:
     """Cross-coder peer review with loop-guard escalation."""
@@ -101,6 +144,10 @@ def peer_review_node(state: GraphState) -> dict:
         item.review_notes = result
         item.status = ItemStatus.IN_PROGRESS
         record_agent_outcome(state.repo_root, item.task_type, state.active_coder, success=False)
+
+        # --- Three-condition convergence exit (evaluated in priority order) ---
+        #
+        # Condition 1 — hard ceiling: max rework cycles exhausted
         if item.rework_count >= settings.max_rework_cycles_per_item:
             emit_status(
                 reviewer,
@@ -109,6 +156,40 @@ def peer_review_node(state: GraphState) -> dict:
             )
             phase = WorkflowPhase.TESTING
             verdict = "ESCALATE_TESTING"
+
+        # Condition 2 — diff-delta convergence: the coder's output is no longer
+        # changing meaningfully; the reviewer is going in circles. Escalate to
+        # the deterministic tester instead of looping back to a subjective review.
+        elif _check_convergence(item, item.last_coder_diff):
+            emit_status(
+                reviewer,
+                f"⚠️ Convergence detected for {item.id} — diff delta below threshold "
+                f"after {item.rework_count} rework cycles. Escalating to tester gate.",
+                **_progress_meta(state, "testing"),
+            )
+            logger.info(
+                "Convergence exit triggered for item %s after %d rework cycles",
+                item.id,
+                item.rework_count,
+            )
+            phase = WorkflowPhase.TESTING
+            verdict = "ESCALATE_CONVERGENCE"
+
+        # Condition 3 — second+ rework cycle: run the tester first so an
+        # objective pass/fail can short-circuit further reviewer loops.
+        # On the very first rework (rework_count == 1) we send straight back
+        # to the coder — no tester overhead on the fast path.
+        elif item.rework_count >= 2:
+            emit_status(
+                reviewer,
+                f"🔄 Peer review REWORK (cycle {item.rework_count}) — "
+                f"running tester first before returning to {impl_label}",
+                **_progress_meta(state, "testing"),
+            )
+            phase = WorkflowPhase.TESTING
+            verdict = "REWORK_VIA_TESTER"
+
+        # First rework — fast path straight back to coder
         else:
             emit_status(reviewer, f"🔄 Peer review REWORK - back to {impl_label}", **_progress_meta(state, "coding"))
             phase = WorkflowPhase.CODING
@@ -122,6 +203,7 @@ def peer_review_node(state: GraphState) -> dict:
         "peer_review_verdict": verdict,
         "peer_review_notes": result,
         "phase": phase,
+        "convergence_detected": verdict == "ESCALATE_CONVERGENCE",
         **budget_update,
     }
 

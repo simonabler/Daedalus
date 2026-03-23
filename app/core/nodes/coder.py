@@ -216,6 +216,15 @@ def coder_node(state: GraphState) -> dict:
     with suppress(Exception):
         _write_todo_file(state.todo_items, state.user_request)
 
+    # Snapshot the current diff so peer_review can detect convergence on the
+    # next rework cycle (if any). Stored on the item itself so it survives
+    # checkpoint/resume without touching GraphState.
+    with suppress(Exception):
+        from app.tools.git import git_command as _git_cmd
+        diff_snapshot = _git_cmd.invoke({"command": "git diff HEAD"}) or ""
+        if diff_snapshot:
+            item.last_coder_diff = diff_snapshot
+
     updates = {
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
