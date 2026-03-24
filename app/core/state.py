@@ -37,6 +37,7 @@ class TodoItem(BaseModel):
     rework_count: int = 0
     test_fail_count: int = 0
     coder_questions_asked: int = 0   # number of ask_human signals emitted for this item
+    last_coder_diff: str = ""        # git diff snapshot after previous coder pass (for convergence detection)
 
 
 class WorkflowPhase(StrEnum):
@@ -74,6 +75,39 @@ class PRResult(BaseModel):
     url: str
     number: int
     platform: str = ""   # "github" | "gitlab"
+
+
+class CoderOutput(BaseModel):
+    """Provenance envelope for a single coder pass.
+
+    Stored in ``GraphState.agent_output_log`` so every agent output is
+    attributable — which agent, which item, which iteration, when.
+    Addresses STRAT-SI-007 (output aggregation loses source attribution).
+    """
+    agent: str           # "coder_a" | "coder_b"
+    item_id: str
+    iteration: int       # item.iteration_count at time of output
+    rework_cycle: int    # item.rework_count at time of output
+    timestamp: str       # ISO-8601 UTC
+    result_summary: str  # first 300 chars of last_coder_result
+    verdict: str = ""    # filled by peer_review: "APPROVE" | "REWORK" | ...
+
+
+class CoderDecision(BaseModel):
+    """Audit record for a coder-assignment decision.
+
+    Written at every point where ``active_coder`` changes so the delegation
+    chain is fully observable.
+    Addresses STRAT-DC-003 (unobserved decision point in delegation chain).
+    """
+    trigger: str         # "plan_start" | "item_advance" | "rework" | "rework_via_tester" | "escalate"
+    from_coder: str      # previous active_coder (empty string at plan start)
+    to_coder: str        # new active_coder
+    item_id: str
+    iteration: int
+    rework_cycle: int
+    timestamp: str       # ISO-8601 UTC
+    reason: str = ""     # human-readable explanation
 
 
 class GraphState(BaseModel):
@@ -151,6 +185,13 @@ class GraphState(BaseModel):
     stop_reason: str = ""
     needs_replan: bool = False
     error_message: str = ""
+    convergence_detected: bool = False  # True when diff-delta convergence exit was triggered
+
+    # ── Validation / error propagation ────────────────────────────────
+    # Set by validate_node before each handoff; cleared after passing.
+    validation_contract: str = ""        # which contract to enforce (e.g. "planner_to_coder")
+    validation_passed: bool = False      # True after a successful validation
+    validation_failures: list[dict[str, str]] = Field(default_factory=list)  # [{rule, message}]
 
     # ── Messages (for LangGraph message passing) ──────────────────────
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
@@ -186,6 +227,12 @@ class GraphState(BaseModel):
     total_iterations: int = 0
     completed_items: int = 0
     env_fix_attempts: int = 0   # number of env-fix rounds attempted for current item
+
+    # ── Provenance / audit logs ───────────────────────────────────────
+    # STRAT-SI-007: every coder output is tagged with agent + item + iteration.
+    agent_output_log: list[CoderOutput] = Field(default_factory=list)
+    # STRAT-DC-003: every coder-assignment decision is recorded for auditability.
+    coder_decision_log: list[CoderDecision] = Field(default_factory=list)
 
     # ── Token budget ──────────────────────────────────────────────────
     # Stored as a plain dict (TokenBudget.to_dict()) so Pydantic can

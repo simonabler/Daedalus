@@ -19,7 +19,7 @@ from app.core.events import (
     emit_status,
 )
 from app.core.logging import get_logger
-from app.core.state import GraphState, ItemStatus, WorkflowPhase
+from app.core.state import CoderDecision, CoderOutput, GraphState, ItemStatus, WorkflowPhase
 from app.core.token_budget import BudgetExceededException
 from app.tools.filesystem import read_file
 
@@ -68,6 +68,32 @@ def coder_node(state: GraphState) -> dict:
 
     item.status = ItemStatus.IN_PROGRESS
     item.iteration_count += 1
+
+    # STRAT-DC-003: record the coder-assignment decision so the delegation
+    # chain is fully observable and auditable.
+    _coder_decision = CoderDecision(
+        trigger="rework" if item.rework_count > 0 else "item_start",
+        from_coder=state.active_coder,
+        to_coder=active,
+        item_id=item.id,
+        iteration=item.iteration_count,
+        rework_cycle=item.rework_count,
+        timestamp=datetime.now(UTC).isoformat(),
+        reason=(
+            f"Rework cycle {item.rework_count} — reviewer requested changes"
+            if item.rework_count > 0
+            else f"Starting item {item.id}: {item.description[:60]}"
+        ),
+    )
+    logger.info(
+        "CoderDecision | trigger=%s | %s → %s | item=%s | iteration=%d | rework=%d",
+        _coder_decision.trigger,
+        _coder_decision.from_coder or "(none)",
+        _coder_decision.to_coder,
+        item.id,
+        item.iteration_count,
+        item.rework_count,
+    )
 
     settings = get_settings()
     if item.iteration_count > settings.max_iterations_per_item:
@@ -216,10 +242,37 @@ def coder_node(state: GraphState) -> dict:
     with suppress(Exception):
         _write_todo_file(state.todo_items, state.user_request)
 
+    # Snapshot the current diff so peer_review can detect convergence on the
+    # next rework cycle (if any). Stored on the item itself so it survives
+    # checkpoint/resume without touching GraphState.
+    with suppress(Exception):
+        from app.tools.git import git_command as _git_cmd
+        diff_snapshot = _git_cmd.invoke({"command": "git diff HEAD"}) or ""
+        if diff_snapshot:
+            item.last_coder_diff = diff_snapshot
+
+    # STRAT-SI-007: build a provenance-tagged output record so every coder
+    # pass is attributable (agent, item, iteration, rework cycle, timestamp).
+    _coder_output = CoderOutput(
+        agent=active,
+        item_id=item.id,
+        iteration=item.iteration_count,
+        rework_cycle=item.rework_count,
+        timestamp=datetime.now(UTC).isoformat(),
+        result_summary=result[:300],
+    )
+    logger.info(
+        "CoderOutput | agent=%s | item=%s | iteration=%d | rework=%d",
+        active, item.id, item.iteration_count, item.rework_count,
+    )
+
     updates = {
         "last_coder_result": result,
         "phase": WorkflowPhase.PEER_REVIEWING,
         "total_iterations": state.total_iterations + 1,
+        # Provenance logs — append-only
+        "agent_output_log": list(state.agent_output_log) + [_coder_output],
+        "coder_decision_log": list(state.coder_decision_log) + [_coder_decision],
         # Propagate updated todo_items (coder_questions_asked counter may have changed)
         "todo_items": updated_items,
         # Clear any lingering question state from previous items

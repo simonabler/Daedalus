@@ -72,7 +72,7 @@ class TestRouting:
             phase=WorkflowPhase.CODING,
             todo_items=[TodoItem(id="item-001", description="test")],
         )
-        assert _route_after_plan(state) == "coder"
+        assert _route_after_plan(state) == "validate_planner_to_coder"
 
     def test_route_after_plan_stopped(self):
         from app.core.orchestrator import _route_after_plan
@@ -87,16 +87,16 @@ class TestRouting:
     def test_route_after_coder_to_peer_review(self):
         from app.core.orchestrator import _route_after_coder
         state = GraphState(phase=WorkflowPhase.PEER_REVIEWING)
-        assert _route_after_coder(state) == "peer_review"
+        assert _route_after_coder(state) == "validate_coder_to_peer_review"
 
     def test_route_after_peer_review_always_goes_to_learn(self):
         from app.core.orchestrator import _route_after_peer_review
-        # APPROVE → learn
+        # APPROVE → validate then learn
         state = GraphState(phase=WorkflowPhase.REVIEWING)
-        assert _route_after_peer_review(state) == "learn"
-        # REWORK → also learn (extracts insights even from rework)
+        assert _route_after_peer_review(state) == "validate_peer_review_to_learn"
+        # REWORK → also validate then learn (extracts insights even from rework)
         state2 = GraphState(phase=WorkflowPhase.CODING)
-        assert _route_after_peer_review(state2) == "learn"
+        assert _route_after_peer_review(state2) == "validate_peer_review_to_learn"
 
     def test_route_after_learn_approve(self):
         from app.core.orchestrator import _route_after_learn
@@ -126,7 +126,7 @@ class TestRouting:
     def test_route_after_tester_pass(self):
         from app.core.orchestrator import _route_after_tester
         state = GraphState(phase=WorkflowPhase.DECIDING)
-        assert _route_after_tester(state) == "decide"
+        assert _route_after_tester(state) == "validate_tester_to_decide"
 
     def test_route_after_tester_fail(self):
         from app.core.orchestrator import _route_after_tester
@@ -187,13 +187,21 @@ class TestGraphBuild:
     def test_graph_has_peer_review_node(self):
         from app.core.orchestrator import build_graph
         graph = build_graph()
-        # Verify peer_review node exists in the graph
         assert "peer_review" in graph.nodes
 
     def test_graph_has_learn_node(self):
         from app.core.orchestrator import build_graph
         graph = build_graph()
         assert "learn" in graph.nodes
+
+    def test_graph_has_validation_nodes(self):
+        from app.core.orchestrator import build_graph
+        graph = build_graph()
+        assert "validate_planner_to_coder" in graph.nodes
+        assert "validate_coder_to_peer_review" in graph.nodes
+        assert "validate_peer_review_to_learn" in graph.nodes
+        assert "validate_tester_to_decide" in graph.nodes
+        assert "error_handler" in graph.nodes
 
 
 class TestParsePlan:
